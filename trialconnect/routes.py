@@ -5,118 +5,205 @@ from datetime import datetime, timedelta, timezone
 from flask import get_flashed_messages, render_template, request, redirect, url_for, session, current_app, abort, flash, make_response, jsonify
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
-import os, uuid,requests
+import os, uuid, requests
 from .oauth_setup import oauth
 from helpers import (
-    add_contact_message, get_or_create_user, get_db, get_user_by_email, 
-    validate_password_strength, allowed_file, 
-    get_user_by_id, search_clinical_trials, get_location_from_ip, haversine, 
-    remove_promoted_study, get_all_promoted_studies, get_all_promoted_studies_set, 
-    add_promoted_study, log_promotion_analytic, check_user_study_match 
+    add_contact_message, get_or_create_user, get_db, get_user_by_email,
+    validate_password_strength, allowed_file,
+    get_user_by_id, search_clinical_trials, get_location_from_ip, haversine,
+    remove_promoted_study, get_all_promoted_studies, get_all_promoted_studies_set,
+    add_promoted_study, log_promotion_analytic, check_user_study_match,
+    # --- Hackathon additions ---
+    search_trials_mongo, score_trial,
+    fetch_trial_eligibility_text, gemini_eligibility_check,
+    extract_patient_profile_from_document
 )
 
-# Get the app instance from the current application context
 app = current_app
 
 # --- Page Routes ---
 @app.route('/')
 def index():
     query = request.args.get('query')
-    
-    # We ONLY get the fallback location from IP. The real search happens later.
+
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     fallback_lat, fallback_lon = get_location_from_ip(user_ip)
 
-    # Set a hard-coded fallback just in case the IP lookup also fails
     if not fallback_lat or not fallback_lon:
-        fallback_lat = 40.7128 # Example: New York
+        fallback_lat = 40.7128
         fallback_lon = -74.0060
 
-    # Send the empty page with only the query and fallback location
     return render_template(
-        "index.html", 
-        query=query, 
+        "index.html",
+        query=query,
         results=[],
         fallback_lat=fallback_lat,
         fallback_lon=fallback_lon,
         google_maps_api_key=current_app.config['GOOGLE_MAPS_API_KEY']
     )
 
+
 @app.route('/api/search')
 def api_search():
+    """
+    Main search endpoint. Uses MongoDB Atlas vector search when MONGODB_URI is
+    configured, otherwise falls back to the ClinicalTrials.gov live API.
+    Results are ranked by composite score (semantic relevance + proximity).
+    Promoted studies are always floated to the top.
+    """
     query = request.args.get('query')
-    # Get the PRECISE coordinates sent from the browser JavaScript
     user_lat = request.args.get('lat', type=float)
     user_lon = request.args.get('lon', type=float)
 
-    search_results = []
-    
     if not query:
         return jsonify({"error": "A query is required."}), 400
     if not user_lat or not user_lon:
         return jsonify({"error": "A location is required."}), 400
 
     try:
-        # 1. This is your existing logic: Get raw API results
-        search_results_raw = search_clinical_trials(
-            query, 
-            user_lat, 
-            user_lon, 
-            radius=200, 
-            unit="km"
-        )
+        # 1. Search — MongoDB Atlas vector search with CT.gov fallback
+        search_results_raw = search_trials_mongo(query, user_lat, user_lon, radius_km=200)
 
-        # 2. This is your existing logic: Calculate distance for each study
-        # We'll put them in a new list, as the user's original logic did.
+        # 2. Calculate haversine distance + composite score for each trial
         processed_studies = []
+        patient_location = {"location": {"lat": user_lat, "lon": user_lon}}
+
         for study in search_results_raw:
             min_distance = float('inf')
             for location in study.get('locations', []):
-                if location.get('geoPoint'):
-                    dist = haversine(
-                        user_lat, user_lon,
-                        location['geoPoint']['lat'], location['geoPoint']['lon']
-                    )
+                # Support both MongoDB format {lat, lon} and CT.gov format {geoPoint: {lat, lon}}
+                geo = location.get('geoPoint') or location
+                lat = geo.get('lat')
+                lon = geo.get('lon')
+                if lat and lon:
+                    dist = haversine(user_lat, user_lon, lat, lon)
                     if dist < min_distance:
                         min_distance = dist
-            
+
             if min_distance != float('inf'):
                 study['closest_distance_km'] = round(min_distance)
-                processed_studies.append(study) # Only add studies that have a valid distance
-            # Note: This logic correctly filters out studies that are in the API 
-            # but outside the Haversine distance you check (e.g. API geo-filter is a square, haversine is a circle)
+                study['score'] = score_trial(study, patient_location)
+                processed_studies.append(study)
 
-        # 3. Get the set of all promoted NCT IDs for a fast lookup
+        # 3. Separate promoted vs regular
         promoted_set = get_all_promoted_studies_set()
-
         promoted_list = []
         regular_list = []
 
-        # 4. Separate all studies into two lists: promoted and regular
         for study in processed_studies:
             if study['nctId'] in promoted_set:
                 study['is_promoted'] = True
                 promoted_list.append(study)
-                # This fulfills your analytics request:
                 log_promotion_analytic(study['nctId'], query)
             else:
                 study['is_promoted'] = False
                 regular_list.append(study)
 
-        # 5. Sort BOTH lists by distance (maintaining your original sort order)
-        promoted_list.sort(key=lambda x: x.get('closest_distance_km', float('inf')))
-        regular_list.sort(key=lambda x: x.get('closest_distance_km', float('inf')))
+        # 4. Sort each group by composite score descending
+        promoted_list.sort(key=lambda x: x.get('score', 0), reverse=True)
+        regular_list.sort(key=lambda x: x.get('score', 0), reverse=True)
 
-        # 6. Combine the lists, with promoted studies always first.
-        final_sorted_list = promoted_list + regular_list
-        
-        # 7. Return the final sorted data as JSON
-        return jsonify(final_sorted_list)
+        return jsonify(promoted_list + regular_list)
 
     except Exception as e:
-        print(f"Error in API search: {e}")
+        print(f"Error in api_search: {e}")
         return jsonify({"error": "An error occurred while searching."}), 500
 
+
+@app.route('/api/upload_profile', methods=['POST'])
+def api_upload_profile():
+    """
+    Accepts a PDF or image medical document (lab report, discharge summary),
+    extracts a structured patient profile using Gemini multimodal,
+    and returns it as JSON for the frontend to store in sessionStorage.
+    """
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided."}), 400
+
+    file = request.files['file']
+    if not file or file.filename == '':
+        return jsonify({"error": "No file selected."}), 400
+
+    allowed_upload_types = {'pdf', 'png', 'jpg', 'jpeg'}
+    ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+    if ext not in allowed_upload_types:
+        return jsonify({"error": f"File type .{ext} not supported. Use PDF, PNG, or JPG."}), 400
+
+    mime_map = {
+        'pdf':  'application/pdf',
+        'png':  'image/png',
+        'jpg':  'image/jpeg',
+        'jpeg': 'image/jpeg'
+    }
+
+    try:
+        file_bytes = file.read()
+        mime_type = mime_map[ext]
+        profile = extract_patient_profile_from_document(file_bytes, mime_type)
+        return jsonify({"status": "ok", "patient_profile": profile})
+    except Exception as e:
+        print(f"Document extraction error: {e}")
+        return jsonify({"error": "Failed to extract profile from document."}), 500
+
+
+@app.route('/api/check_match/<nct_id>', methods=['GET', 'POST'])
+def api_check_match(nct_id):
+    """
+    Checks whether the logged-in user matches a trial's eligibility criteria.
+
+    GET  — lightweight age/sex check (existing behaviour, no Gemini needed).
+    POST — full Gemini reasoning. Expects JSON body with enriched patient
+           profile extracted from an uploaded document:
+           { "diagnosis": [...], "labs": {...}, "prior_treatments": [...] }
+
+    Always falls back gracefully: if Gemini is not configured or POST body is
+    empty, it runs the original age/sex check instead.
+    """
+    if not session.get('user'):
+        return jsonify({"status": "NOT_LOGGED_IN"}), 401
+
+    if not nct_id:
+        return jsonify({"error": "NCT ID is required."}), 400
+
+    user_data = session.get('user')
+
+    # Build base patient profile from session (age + sex baseline)
+    patient_profile = {}
+    if user_data.get('birthYear'):
+        patient_profile['age'] = datetime.now().year - int(user_data['birthYear'])
+    if user_data.get('sex'):
+        patient_profile['sex'] = user_data['sex'].upper()
+
+    # Merge richer profile from POST body (uploaded document extraction)
+    enriched = {}
+    if request.method == 'POST':
+        enriched = request.get_json(silent=True) or {}
+        patient_profile.update(enriched)
+
+    # If we only have age/sex (no enriched data), use the fast lightweight check
+    has_enriched_data = any(k in enriched for k in ('diagnosis', 'labs', 'prior_treatments', 'comorbidities'))
+
+    if not has_enriched_data:
+        if not patient_profile.get('age') or not patient_profile.get('sex'):
+            return jsonify({"status": "NO_DATA", "reason": "User profile is incomplete."})
+        return jsonify(check_user_study_match(user_data, nct_id))
+
+    # Full Gemini reasoning path
+    try:
+        eligibility_text = fetch_trial_eligibility_text(nct_id)
+        if not eligibility_text:
+            # Fall back to lightweight check if no criteria text available
+            return jsonify(check_user_study_match(user_data, nct_id))
+
+        result = gemini_eligibility_check(patient_profile, eligibility_text, nct_id)
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"Match check error for {nct_id}: {e}")
+        return jsonify({"error": "Match check failed."}), 500
+
+
+# --- Static Page Routes (unchanged) ---
 @app.route('/about')
 def about():
     return render_template("about.html")
@@ -151,82 +238,69 @@ def contact():
         else:
             add_contact_message(firstName, lastName, email, message)
             return redirect(url_for('thank_you'))
-    
-    # Pass the logged-in user's data to the template
+
     return render_template("contact.html", error=error)
 
-# --- Authentication Routes ---
+
+# --- Authentication Routes (unchanged) ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form.get('password')
-        remember = request.form.get('rememberMe') == 'on' # Check the checkbox
+        remember = request.form.get('rememberMe') == 'on'
 
         user = get_user_by_email(email)
         if user and check_password_hash(user['password_hash'], password):
             session['user'] = user
             flash('You have been logged in successfully.', 'success')
-            
-            # Create a response object
             response = make_response(redirect(url_for('index')))
-            
-            # If "Remember Me" is checked, set the cookie
             if remember:
-                # Set a cookie that expires in 30 days
                 response.set_cookie('remember_token', user['remember_token'], max_age=30*24*60*60)
-            
             return response
         else:
             flash('Invalid email or password. Please try again.', 'danger')
-            
+
     return render_template("login.html")
+
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        # Get the first and last name from the form
         first_name = request.form.get('firstName')
         last_name = request.form.get('lastName')
         birthYear = request.form.get('birthYear')
-        sex = request.form.get('sex') 
+        sex = request.form.get('sex')
         agreement_agreed = request.form.get('agreement')
         email = request.form.get('email')
         password = request.form.get('password')
         confirm_password = request.form.get('confirm_password')
 
-        # Check for existing user
         existing_user = get_user_by_email(email)
         if existing_user:
-            # User exists, so check their password
             if check_password_hash(existing_user['password_hash'], password):
-                # Password is correct, so log them in directly
                 session['user'] = existing_user
                 flash('Welcome back! You have been logged in successfully.', 'success')
                 return redirect(url_for('index'))
             else:
-                # Email exists, but password is wrong. Redirect to login.
                 message = 'An account with this email already exists. Please <a href="/login" class="alert-link">log in</a> or reset your password.'
                 flash(message, 'warning')
                 return redirect(url_for('login'))
 
-        # Validate password strength
         strength_errors = validate_password_strength(password)
         if strength_errors:
             for error in strength_errors:
                 flash(error, 'danger')
             return render_template('register.html')
 
-        # Check if passwords match
         if password != confirm_password:
             flash("Passwords do not match. Please try again.", 'danger')
             return render_template('register.html')
-        
+
         if not agreement_agreed:
             flash("You must agree to the Terms and Privacy Policy to register.", "danger")
             return render_template('register.html', now=datetime.now())
 
-        # Pass the data to the helper function
         user = get_or_create_user(
             email=email,
             firstName=first_name,
@@ -236,17 +310,17 @@ def register():
             password=password,
             auth_provider='local'
         )
-
-        # Log the user in by setting the session
         session['user'] = user
         return redirect(url_for('index'))
-        
+
     return render_template("register.html", now=datetime.now())
+
 
 @app.route('/login/google')
 def login_google():
     redirect_uri = url_for('authorize', _external=True)
     return oauth.google.authorize_redirect(redirect_uri)
+
 
 @app.route('/authorize')
 def authorize():
@@ -259,29 +333,26 @@ def authorize():
         full_name = user_info.get('name', '').split(' ', 1)
         first_name = full_name[0]
         last_name = full_name[1] if len(full_name) > 1 else ''
-    
-    # Pass the picture URL to the helper function
+
     user = get_or_create_user(
         email=user_info['email'],
         firstName=first_name,
         lastName=last_name,
         auth_provider='google',
         provider_id=user_info['sub'],
-        profile_picture_url=user_info.get('picture') # Get the picture from Google
+        profile_picture_url=user_info.get('picture')
     )
-    
     session['user'] = user
     return redirect(url_for('index'))
+
 
 @app.route('/logout')
 def logout():
     session.pop('user', None)
-    
-    # Create a response object to clear the cookie
     response = make_response(redirect(url_for('index')))
     response.set_cookie('remember_token', '', expires=0)
-    
     return response
+
 
 @app.route('/forgot_password', methods=['GET', 'POST'])
 def forgot_password():
@@ -291,10 +362,7 @@ def forgot_password():
 
         if user:
             otp = ''.join(secrets.choice('0123456789') for i in range(6))
-            
-            # We'll store the OTP with the user's email to keep track of it
             session[f'otp_for_{email}'] = otp
-            
             otp_hash = generate_password_hash(otp)
             expiration = datetime.utcnow() + timedelta(minutes=10)
 
@@ -305,13 +373,11 @@ def forgot_password():
             )
             db.commit()
 
-            flash("If an account with that email exists, a password reset code has been sent.", "success")
-        else:
-            flash("If an account with that email exists, a password reset code has been sent.", "success")
-
+        flash("If an account with that email exists, a password reset code has been sent.", "success")
         return redirect(url_for('index'))
 
     return render_template("forgot_password.html")
+
 
 @app.route('/reset_with_token', methods=['GET', 'POST'])
 def reset_with_token():
@@ -323,7 +389,6 @@ def reset_with_token():
 
         user = get_user_by_email(email)
 
-        # --- Existing validation for user, OTP, and expiration ---
         if not user or not user['reset_token'] or not check_password_hash(user['reset_token'], otp):
             flash("Invalid email or reset code.", "danger")
             return redirect(url_for('reset_with_token'))
@@ -333,18 +398,17 @@ def reset_with_token():
             flash("The reset code has expired. Please request a new one.", "danger")
             session.pop(f'otp_for_{email}', None)
             return redirect(url_for('forgot_password'))
-        
-        # --- Server-side password strength validation ---
+
         strength_errors = validate_password_strength(new_password)
         if strength_errors:
             for error in strength_errors:
                 flash(error, 'danger')
-            return redirect(url_for('reset_with_token')) # Redirect back if weak
+            return redirect(url_for('reset_with_token'))
 
         if new_password != confirm_password:
             flash("Passwords do not match.", "danger")
             return redirect(url_for('reset_with_token'))
-            
+
         new_password_hash = generate_password_hash(new_password)
         db = get_db()
         db.execute(
@@ -352,13 +416,12 @@ def reset_with_token():
             (new_password_hash, user['id'])
         )
         db.commit()
-
         session.pop(f'otp_for_{email}', None)
-
         flash("Your password has been successfully reset. Please log in.", "success")
         return redirect(url_for('login'))
 
     return render_template("reset_with_token.html")
+
 
 @app.route('/profile', methods=['GET', 'POST'])
 def profile():
@@ -367,23 +430,19 @@ def profile():
         return redirect(url_for('login'))
 
     user_id = session['user']['id']
-    
+
     if request.method == 'POST':
         db = get_db()
-        
-        # Get ALL the profile fields from the form
         firstName = request.form.get('firstName')
         lastName = request.form.get('lastName')
         birthYear = request.form.get('birthYear')
         sex = request.form.get('sex')
 
-        # This SQL query is now corrected to update all four fields
         db.execute(
             "UPDATE users SET firstName = ?, lastName = ?, birthYear = ?, sex = ? WHERE id = ?",
             (firstName, lastName, birthYear, sex, user_id)
         )
 
-        
         if 'profile_picture' in request.files:
             file = request.files['profile_picture']
             if file and file.filename and allowed_file(file.filename):
@@ -391,15 +450,17 @@ def profile():
                 unique_filename = str(uuid.uuid4()) + "_" + filename
                 filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], unique_filename)
                 file.save(filepath)
-                db.execute("UPDATE users SET profile_picture_url = ? WHERE id = ?", (url_for('static', filename=f'profile_pictures/{unique_filename}'), user_id))
-        
-        # --- Update Password ---
+                db.execute(
+                    "UPDATE users SET profile_picture_url = ? WHERE id = ?",
+                    (url_for('static', filename=f'profile_pictures/{unique_filename}'), user_id)
+                )
+
         new_password = request.form.get('new_password')
         if new_password:
             current_password = request.form.get('current_password')
             confirm_password = request.form.get('confirm_password')
             user = get_user_by_id(user_id)
-            
+
             if not user or not user.get('password_hash') or not check_password_hash(user['password_hash'], current_password):
                 flash("Your current password was incorrect.", "danger")
             elif validate_password_strength(new_password):
@@ -407,56 +468,48 @@ def profile():
             elif new_password != confirm_password:
                 flash("The new passwords do not match.", "danger")
             else:
-                # All password checks passed
                 new_password_hash = generate_password_hash(new_password)
                 db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_password_hash, user_id))
                 flash("Your password was updated successfully!", "success")
 
         db.commit()
-        
-        # Refresh session and redirect
         session['user'] = get_user_by_id(user_id)
-        
-        # Only flash "profile saved" if we didn't just flash a password message
-        password_flashed = any(cat in ['success', 'danger'] for cat, msg in (get_flashed_messages(with_categories=True) or []) if "password" in msg.lower())
+
+        password_flashed = any(
+            cat in ['success', 'danger']
+            for cat, msg in (get_flashed_messages(with_categories=True) or [])
+            if "password" in msg.lower()
+        )
         if not password_flashed:
             flash("Your profile has been saved.", "success")
-            
+
         return redirect(url_for('profile'))
 
     user_data = get_user_by_id(user_id)
-    return render_template(
-        "profile.html", 
-        user=user_data, 
-        now=datetime.now(timezone.utc)
-    )
+    return render_template("profile.html", user=user_data, now=datetime.now(timezone.utc))
+
 
 @app.route('/delete_account', methods=['POST'])
 def delete_account():
-    # Ensure user is logged in
     if 'user' not in session:
-        abort(403) 
-    
+        abort(403)
+
     user_id = session['user']['id']
     email = session['user']['email']
 
-    # Prevent the primary admin from deleting their own account from this form
     if email == 'frenchieeap@gmail.com':
         flash("The primary admin account cannot be deleted.", "danger")
         return redirect(url_for('profile'))
 
-    # Delete the user from the database
     db = get_db()
     db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     db.commit()
-
-    # Log the user out and clear the session completely
     session.clear()
-
     flash("Your account has been permanently deleted.", "success")
     return redirect(url_for('index'))
 
-# --- Admin Routes ---
+
+# --- Admin Routes (unchanged) ---
 @app.route('/admin')
 def admin():
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
@@ -465,33 +518,24 @@ def admin():
     db = get_db()
     users_raw = db.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
     contacts = db.execute("SELECT * FROM contacts ORDER BY id DESC").fetchall()
-    
-    # 1. Get the raw list from the DB
     promoted_list_raw = get_all_promoted_studies()
-    
-    # 2. Process the promoted list to convert timestamps
+
     promoted_list = []
     for study_row in promoted_list_raw:
-        study = dict(study_row) # Convert Row to dict
+        study = dict(study_row)
         try:
-            # Use strptime to parse the 'YYYY-MM-DD HH:MM:SS' format from SQLite
             study['added_at'] = datetime.strptime(study['added_at'], '%Y-%m-%d %H:%M:%S')
         except (ValueError, TypeError, KeyError):
-            # Fallback if the timestamp is somehow invalid
             study['added_at'] = datetime.now(timezone.utc)
         promoted_list.append(study)
 
-    
-    # --- Pre-process user data ---
     processed_users = []
     for user_row in users_raw:
         user = dict(user_row)
-        user['token_status'] = 'none' # Default status
-
+        user['token_status'] = 'none'
         if user.get('reset_token_expiration'):
             try:
-                expiration_time = datetime.fromisoformat(user['reset_token_expiration']) 
-                
+                expiration_time = datetime.fromisoformat(user['reset_token_expiration'])
                 if expiration_time > datetime.now(timezone.utc):
                     user['token_status'] = 'valid'
                     user['formatted_expiration'] = expiration_time.strftime('%H:%M:%S UTC')
@@ -499,13 +543,11 @@ def admin():
                     user['token_status'] = 'expired'
             except (ValueError, TypeError):
                 user['token_status'] = 'error'
-
         processed_users.append(user)
-    
-    # 3. Pass all the processed lists to the template
+
     return render_template(
-        "admin.html", 
-        users=processed_users, 
+        "admin.html",
+        users=processed_users,
         contacts=contacts,
         promoted_list=promoted_list
     )
@@ -513,19 +555,15 @@ def admin():
 
 @app.route('/admin/delete_user/<int:user_id>', methods=['POST'])
 def delete_user(user_id):
-    # Secure the route to the admin user
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
         abort(403)
 
     db = get_db()
     user_to_delete = db.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
-
-    # Prevent the admin from deleting their own account
     if user_to_delete and user_to_delete['email'] == 'frenchieeap@gmail.com':
         flash("You cannot delete the primary admin account.", "danger")
         return redirect(url_for('admin'))
 
-    # Proceed with deletion
     db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     db.commit()
     flash("User has been successfully deleted.", "success")
@@ -534,75 +572,49 @@ def delete_user(user_id):
 
 @app.route('/admin/delete_contact/<int:contact_id>', methods=['POST'])
 def delete_contact(contact_id):
-    # Secure the route
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
         abort(403)
-    
+
     db = get_db()
     db.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
     db.commit()
     flash("Contact message has been successfully deleted.", "success")
     return redirect(url_for('admin'))
 
+
 @app.route('/admin/clear_data', methods=['POST'])
 def clear_data():
-    # Double-check authorization before performing a destructive action
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
         abort(403)
-    
+
     db = get_db()
-    # Delete all users except for the admin
     db.execute("DELETE FROM users WHERE email != ?", ('frenchieeap@gmail.com',))
-    # Delete all messages from the contacts table
     db.execute("DELETE FROM contacts")
     db.commit()
-    
-    # Provide feedback to the admin
     flash("All user and contact entries (except for the admin account) have been successfully deleted.", "success")
     return redirect(url_for('admin'))
 
+
 @app.route("/admin/promote/add", methods=["POST"])
 def add_promotion():
-    # Secure the route
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
         abort(403)
-        
+
     nct_id = request.form.get("nct_id")
     if nct_id:
         add_promoted_study(nct_id)
         flash(f"{nct_id} added to promotions.", "success")
     else:
         flash("NCT ID cannot be empty.", "danger")
-        
+
     return redirect(url_for('admin'))
+
 
 @app.route("/admin/promote/remove/<nct_id>", methods=["POST"])
 def remove_promotion(nct_id):
-    # Secure the route
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
         abort(403)
-        
+
     remove_promoted_study(nct_id)
     flash(f"{nct_id} removed from promotions.", "success")
     return redirect(url_for('admin'))
-
-@app.route('/api/check_match/<nct_id>')
-def api_check_match(nct_id):
-    # This feature is only for logged-in users
-    if not session.get('user'):
-        return jsonify({"status": "NOT_LOGGED_IN"}), 401
-    
-    # Get the full user profile (from session or DB)
-    user_data = session.get('user')
-    
-    # If user has no birth year or sex set, don't bother checking
-    if not user_data.get('birthYear') or not user_data.get('sex'):
-         return jsonify({"status": "NO_DATA", "reason": "User profile is incomplete."})
-         
-    if not nct_id:
-        return jsonify({"error": "NCT ID is required."}), 400
-
-    # Call your new helper function
-    match_result = check_user_study_match(user_data, nct_id)
-    
-    return jsonify(match_result)
