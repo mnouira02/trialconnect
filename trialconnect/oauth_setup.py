@@ -1,23 +1,27 @@
 # trialconnect/oauth_setup.py
 
 from authlib.integrations.flask_client import OAuth
-import json
+import os
 
 oauth = OAuth()
 
 def init_oauth(app):
-    """Initializes all OAuth providers."""
+    """Initializes all OAuth providers using environment variables."""
     oauth.init_app(app)
 
-    # --- Load Google Credentials ---
-    with open('google_secret.json') as f:
-        google_secrets = json.load(f)['web']
+    client_id = app.config.get('GOOGLE_CLIENT_ID') or os.environ.get('GOOGLE_CLIENT_ID')
+    client_secret = app.config.get('GOOGLE_CLIENT_SECRET') or os.environ.get('GOOGLE_CLIENT_SECRET')
+
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in your .env file."
+        )
 
     # --- Register Google ---
     oauth.register(
         name='google',
-        client_id=google_secrets['client_id'],
-        client_secret=google_secrets['client_secret'],
+        client_id=client_id,
+        client_secret=client_secret,
         client_kwargs={'scope': 'openid email profile'},
         server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
         claims_options={
