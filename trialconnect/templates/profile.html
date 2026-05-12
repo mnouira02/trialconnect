@@ -9,6 +9,8 @@
     <div class="container px-4 px-lg-5">
         <div class="row justify-content-center">
             <div class="col-md-10 col-lg-8 col-xl-7">
+
+                <!-- ── Profile Form Card ── -->
                 <div class="card shadow-lg border-0 rounded-lg mt-5">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h3 class="text-center fw-bolder my-4 flex-grow-1">Edit Profile</h3>
@@ -80,11 +82,79 @@
                         </form>
                     </div>
                 </div>
+
+                <!-- ── Medical Document Upload Card ── -->
+                <div class="card shadow-lg border-0 rounded-lg mt-4 mb-5">
+                    <div class="card-header">
+                        <h3 class="text-center fw-bolder my-4">
+                            <i class="bi bi-file-earmark-medical me-2 text-primary"></i>Import Medical Record
+                        </h3>
+                    </div>
+                    <div class="card-body p-4 p-md-5">
+                        <p class="text-muted text-center mb-4">
+                            Upload a lab report, clinical letter, or discharge summary.
+                            Gemini AI will extract your medical profile to improve trial matching.
+                        </p>
+
+                        <!-- Drop zone -->
+                        <div id="drop-zone" class="border border-2 border-dashed rounded-3 p-5 text-center mb-4"
+                             style="border-color:#0d6efd !important; cursor:pointer; transition: background 0.2s;">
+                            <i class="bi bi-cloud-upload fs-1 text-primary mb-3 d-block"></i>
+                            <p class="mb-1 fw-semibold">Drag &amp; drop your file here</p>
+                            <p class="text-muted small mb-3">or click to browse &mdash; JPG, PNG, PDF accepted</p>
+                            <input type="file" id="med-doc-input" accept="image/jpeg,image/png,application/pdf" class="d-none">
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="browse-btn">
+                                <i class="bi bi-folder2-open me-1"></i>Browse file
+                            </button>
+                        </div>
+
+                        <!-- Selected file info -->
+                        <div id="file-info" class="alert alert-light d-none d-flex align-items-center gap-3 mb-4">
+                            <i class="bi bi-file-earmark-text fs-4 text-primary"></i>
+                            <div class="flex-grow-1">
+                                <div id="file-name" class="fw-semibold"></div>
+                                <div id="file-size" class="text-muted small"></div>
+                            </div>
+                            <button type="button" id="clear-file-btn" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+
+                        <!-- Upload button -->
+                        <div class="d-grid mb-3">
+                            <button type="button" class="btn btn-primary btn-lg" id="upload-doc-btn" disabled>
+                                <span id="upload-btn-text"><i class="bi bi-stars me-2"></i>Extract with Gemini AI</span>
+                                <span id="upload-btn-spinner" class="d-none">
+                                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                    Analysing document&hellip;
+                                </span>
+                            </button>
+                        </div>
+
+                        <!-- Result panel -->
+                        <div id="extraction-result" class="d-none">
+                            <hr class="my-4">
+                            <h5 class="fw-semibold mb-3"><i class="bi bi-check-circle-fill text-success me-2"></i>Extracted Medical Profile</h5>
+                            <div id="extraction-alert" class="alert d-none mb-3"></div>
+                            <div id="extraction-fields"></div>
+                            <div class="d-grid mt-3">
+                                <button type="button" class="btn btn-success" id="apply-profile-btn">
+                                    <i class="bi bi-person-check me-2"></i>Apply to My Profile &amp; Save
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Error panel -->
+                        <div id="upload-error" class="alert alert-danger d-none mt-3"></div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
 </section>
 
+<!-- Delete Account Modal -->
 <div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-labelledby="confirmDeleteModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -109,119 +179,265 @@
 {% block scripts %}
 {{ super() }}
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        
-        // --- Image Preview Logic (Unchanged) ---
-        const profileContainer = document.getElementById('profile-container');
-        const fileInput = document.getElementById('profile_picture');
-        const imagePreview = document.getElementById('image-preview');
-        if (profileContainer) {
-            profileContainer.addEventListener('click', () => fileInput.click());
-        }
-        if (fileInput) {
-            fileInput.addEventListener('change', function() {
-                const file = this.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (e) => { imagePreview.src = e.target.result; };
-                    reader.readAsDataURL(file);
-                }
-            });
-        }
+document.addEventListener('DOMContentLoaded', function() {
 
-        // --- NEW UNIFIED VALIDATION LOGIC ---
-
-        // Get ALL form inputs
-        const saveButton = document.getElementById('save-button');
-        const firstNameInput = document.getElementById('firstName');
-        const lastNameInput = document.getElementById('lastName');
-        const birthYearInput = document.getElementById('birthYear');
-        const sexInput = document.getElementById('sex');
-
-        const currentPasswordInput = document.getElementById('current_password');
-        const newPasswordInput = document.getElementById('new_password');
-        const confirmPasswordInput = document.getElementById('confirm_password');
-        
-        const validationBox = document.getElementById('password-validation-box');
-        const criteria = {
-            length: document.getElementById('length'), 
-            uppercase: document.getElementById('uppercase'),
-            lowercase: document.getElementById('lowercase'), 
-            number: document.getElementById('number'),
-            match: document.getElementById('match')
-        };
-
-        // This is our single function to check the whole form
-        function validateFullForm() {
-            
-            // 1. Check Profile Fields (These are always required)
-            const profileFieldsValid = 
-                firstNameInput.value.trim().length > 0 &&
-                lastNameInput.value.trim().length > 0 &&
-                birthYearInput.value.length > 0 &&  // Assuming HTML 'required' handles content
-                sexInput.value.length > 0;          // Assuming HTML 'required' handles content
-
-            // 2. Check Password Fields
-            const current = currentPasswordInput.value;
-            const password = newPasswordInput.value;
-            const confirm = confirmPasswordInput.value;
-
-            const isPasswordChangeAttempt = current.length > 0 || password.length > 0 || confirm.length > 0;
-            let passwordFieldsValid = false;
-
-            if (isPasswordChangeAttempt) {
-                // User is trying to change password, so we must validate
-                validationBox.classList.remove('d-none');
-                
-                const validations = {
-                    length: password.length >= 8,
-                    uppercase: /[A-Z]/.test(password),
-                    lowercase: /[a-z]/.test(password),
-                    number: /[0-9]/.test(password),
-                    match: password === confirm && password.length > 0
-                };
-                
-                let allRulesMet = true;
-                for (const key in validations) {
-                    if (validations[key]) {
-                        criteria[key].style.color = 'green';
-                        criteria[key].style.fontWeight = 'bold';
-                    } else {
-                        criteria[key].style.color = 'black';
-                        criteria[key].style.fontWeight = 'normal';
-                        allRulesMet = false;
-                    }
-                }
-                
-                // Password section is valid ONLY IF all rules are met AND current password is provided
-                passwordFieldsValid = allRulesMet && current.length > 0;
-
-            } else {
-                // User is NOT changing password, so this section is valid by default.
-                validationBox.classList.add('d-none');
-                passwordFieldsValid = true; 
-            }
-            
-            // 3. FINAL DECISION: Enable save only if profile is valid AND password section is valid.
-            saveButton.disabled = !(profileFieldsValid && passwordFieldsValid);
-        }
-
-        // Attach the listener to EVERY input field on the form
-        const allInputs = [
-            firstNameInput, lastNameInput, birthYearInput, sexInput,
-            currentPasswordInput, newPasswordInput, confirmPasswordInput
-        ];
-
-        allInputs.forEach(input => {
-            if (input) {
-                // Use 'input' for text fields, 'change' for select dropdowns
-                const eventType = (input.tagName === 'SELECT') ? 'change' : 'input';
-                input.addEventListener(eventType, validateFullForm);
+    // ── Profile picture preview ──
+    const profileContainer = document.getElementById('profile-container');
+    const fileInput = document.getElementById('profile_picture');
+    const imagePreview = document.getElementById('image-preview');
+    if (profileContainer) profileContainer.addEventListener('click', () => fileInput.click());
+    if (fileInput) {
+        fileInput.addEventListener('change', function() {
+            const file = this.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => { imagePreview.src = e.target.result; };
+                reader.readAsDataURL(file);
             }
         });
+    }
 
-        // Run once on page load to set the correct initial state
-        validateFullForm();
+    // ── Profile form validation ──
+    const saveButton        = document.getElementById('save-button');
+    const firstNameInput    = document.getElementById('firstName');
+    const lastNameInput     = document.getElementById('lastName');
+    const birthYearInput    = document.getElementById('birthYear');
+    const sexInput          = document.getElementById('sex');
+    const currentPasswordInput = document.getElementById('current_password');
+    const newPasswordInput     = document.getElementById('new_password');
+    const confirmPasswordInput = document.getElementById('confirm_password');
+    const validationBox = document.getElementById('password-validation-box');
+    const criteria = {
+        length: document.getElementById('length'),
+        uppercase: document.getElementById('uppercase'),
+        lowercase: document.getElementById('lowercase'),
+        number: document.getElementById('number'),
+        match: document.getElementById('match')
+    };
+
+    function validateFullForm() {
+        const profileFieldsValid =
+            firstNameInput.value.trim().length > 0 &&
+            lastNameInput.value.trim().length > 0 &&
+            birthYearInput.value.length > 0 &&
+            sexInput.value.length > 0;
+        const current  = currentPasswordInput.value;
+        const password = newPasswordInput.value;
+        const confirm  = confirmPasswordInput.value;
+        const isPasswordChangeAttempt = current.length > 0 || password.length > 0 || confirm.length > 0;
+        let passwordFieldsValid = false;
+        if (isPasswordChangeAttempt) {
+            validationBox.classList.remove('d-none');
+            const validations = {
+                length: password.length >= 8,
+                uppercase: /[A-Z]/.test(password),
+                lowercase: /[a-z]/.test(password),
+                number: /[0-9]/.test(password),
+                match: password === confirm && password.length > 0
+            };
+            let allRulesMet = true;
+            for (const key in validations) {
+                if (validations[key]) {
+                    criteria[key].style.color = 'green';
+                    criteria[key].style.fontWeight = 'bold';
+                } else {
+                    criteria[key].style.color = 'black';
+                    criteria[key].style.fontWeight = 'normal';
+                    allRulesMet = false;
+                }
+            }
+            passwordFieldsValid = allRulesMet && current.length > 0;
+        } else {
+            validationBox.classList.add('d-none');
+            passwordFieldsValid = true;
+        }
+        saveButton.disabled = !(profileFieldsValid && passwordFieldsValid);
+    }
+
+    [firstNameInput, lastNameInput, birthYearInput, sexInput,
+     currentPasswordInput, newPasswordInput, confirmPasswordInput].forEach(input => {
+        if (input) {
+            input.addEventListener((input.tagName === 'SELECT') ? 'change' : 'input', validateFullForm);
+        }
     });
+    validateFullForm();
+
+    // ── Medical Document Upload ──
+    const dropZone       = document.getElementById('drop-zone');
+    const medDocInput    = document.getElementById('med-doc-input');
+    const browseBtn      = document.getElementById('browse-btn');
+    const fileInfo       = document.getElementById('file-info');
+    const fileName       = document.getElementById('file-name');
+    const fileSize       = document.getElementById('file-size');
+    const clearFileBtn   = document.getElementById('clear-file-btn');
+    const uploadDocBtn   = document.getElementById('upload-doc-btn');
+    const uploadBtnText  = document.getElementById('upload-btn-text');
+    const uploadBtnSpinner = document.getElementById('upload-btn-spinner');
+    const extractionResult = document.getElementById('extraction-result');
+    const extractionFields = document.getElementById('extraction-fields');
+    const extractionAlert  = document.getElementById('extraction-alert');
+    const applyProfileBtn  = document.getElementById('apply-profile-btn');
+    const uploadError      = document.getElementById('upload-error');
+
+    let selectedFile = null;
+    let extractedData = null;
+
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(1) + ' MB';
+    }
+
+    function setFile(file) {
+        selectedFile = file;
+        fileName.textContent = file.name;
+        fileSize.textContent = formatBytes(file.size);
+        fileInfo.classList.remove('d-none');
+        uploadDocBtn.disabled = false;
+        extractionResult.classList.add('d-none');
+        uploadError.classList.add('d-none');
+        extractedData = null;
+    }
+
+    function clearFile() {
+        selectedFile = null;
+        medDocInput.value = '';
+        fileInfo.classList.add('d-none');
+        uploadDocBtn.disabled = true;
+        extractionResult.classList.add('d-none');
+        uploadError.classList.add('d-none');
+        extractedData = null;
+    }
+
+    browseBtn.addEventListener('click', () => medDocInput.click());
+    dropZone.addEventListener('click', (e) => { if (e.target !== browseBtn) medDocInput.click(); });
+    medDocInput.addEventListener('change', () => { if (medDocInput.files[0]) setFile(medDocInput.files[0]); });
+    clearFileBtn.addEventListener('click', clearFile);
+
+    // Drag & drop
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.background = '#e8f0fe'; });
+    dropZone.addEventListener('dragleave', () => { dropZone.style.background = ''; });
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.style.background = '';
+        const file = e.dataTransfer.files[0];
+        if (file) setFile(file);
+    });
+
+    // Upload & extract
+    uploadDocBtn.addEventListener('click', async () => {
+        if (!selectedFile) return;
+        uploadBtnText.classList.add('d-none');
+        uploadBtnSpinner.classList.remove('d-none');
+        uploadDocBtn.disabled = true;
+        uploadError.classList.add('d-none');
+        extractionResult.classList.add('d-none');
+
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+
+        try {
+            const response = await fetch('/api/upload_profile', { method: 'POST', body: formData });
+            const data = await response.json();
+
+            if (!response.ok) throw new Error(data.error || 'Upload failed');
+
+            extractedData = data;
+            renderExtraction(data);
+            extractionResult.classList.remove('d-none');
+        } catch (err) {
+            uploadError.textContent = '\u26a0\ufe0f ' + err.message;
+            uploadError.classList.remove('d-none');
+        } finally {
+            uploadBtnText.classList.remove('d-none');
+            uploadBtnSpinner.classList.add('d-none');
+            uploadDocBtn.disabled = false;
+        }
+    });
+
+    function renderExtraction(data) {
+        extractionFields.innerHTML = '';
+
+        const fieldMap = [
+            { key: 'diagnosis',         label: 'Diagnosis',            icon: 'bi-heart-pulse' },
+            { key: 'age',               label: 'Age',                  icon: 'bi-calendar3' },
+            { key: 'sex',               label: 'Sex',                  icon: 'bi-person' },
+            { key: 'ecog_status',       label: 'ECOG Status',          icon: 'bi-activity' },
+            { key: 'comorbidities',     label: 'Comorbidities',        icon: 'bi-bandaid' },
+            { key: 'prior_treatments',  label: 'Prior Treatments',     icon: 'bi-capsule' },
+            { key: 'current_medications', label: 'Current Medications', icon: 'bi-prescription2' },
+            { key: 'labs',              label: 'Lab Values',           icon: 'bi-droplet' },
+        ];
+
+        let hasAny = false;
+        fieldMap.forEach(({ key, label, icon }) => {
+            const val = data[key];
+            if (val === null || val === undefined || val === '') return;
+            if (Array.isArray(val) && val.length === 0) return;
+            if (typeof val === 'object' && !Array.isArray(val) && Object.keys(val).length === 0) return;
+
+            hasAny = true;
+            const row = document.createElement('div');
+            row.className = 'd-flex align-items-start gap-3 mb-3 p-3 bg-light rounded-3';
+
+            let displayVal;
+            if (Array.isArray(val)) {
+                displayVal = val.join(', ');
+            } else if (typeof val === 'object') {
+                displayVal = Object.entries(val)
+                    .map(([k, v]) => `<span class="badge bg-white text-dark border me-1">${k.replace(/_/g,' ')}: ${v}</span>`)
+                    .join(' ');
+            } else {
+                displayVal = String(val);
+            }
+
+            row.innerHTML = `
+                <i class="bi ${icon} fs-5 text-primary mt-1" style="min-width:1.5rem"></i>
+                <div>
+                    <div class="text-muted small mb-1">${label}</div>
+                    <div class="fw-semibold">${displayVal}</div>
+                </div>`;
+            extractionFields.appendChild(row);
+        });
+
+        if (!hasAny) {
+            extractionAlert.textContent = 'Gemini could not extract structured data from this document. Try a clearer image.';
+            extractionAlert.className = 'alert alert-warning';
+            extractionAlert.classList.remove('d-none');
+            applyProfileBtn.classList.add('d-none');
+        } else {
+            extractionAlert.classList.add('d-none');
+            applyProfileBtn.classList.remove('d-none');
+        }
+    }
+
+    // Apply extracted data back to the profile form
+    applyProfileBtn.addEventListener('click', async () => {
+        if (!extractedData) return;
+        applyProfileBtn.disabled = true;
+        applyProfileBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving&hellip;';
+
+        try {
+            const res = await fetch('/api/apply_medical_profile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(extractedData)
+            });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Failed to save');
+
+            extractionAlert.textContent = '\u2705 Medical profile saved! Your trial matches will now be more accurate.';
+            extractionAlert.className = 'alert alert-success';
+            extractionAlert.classList.remove('d-none');
+            applyProfileBtn.classList.add('d-none');
+        } catch (err) {
+            extractionAlert.textContent = '\u26a0\ufe0f ' + err.message;
+            extractionAlert.className = 'alert alert-danger';
+            extractionAlert.classList.remove('d-none');
+            applyProfileBtn.disabled = false;
+            applyProfileBtn.innerHTML = '<i class="bi bi-person-check me-2"></i>Apply to My Profile &amp; Save';
+        }
+    });
+});
 </script>
 {% endblock %}
