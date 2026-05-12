@@ -1,0 +1,175 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Admin Panel - trialconnect
+{% endblock %}
+
+{% block content %}
+<section class="py-5">
+    <div class="container px-5">
+        <div class="text-center mb-5">
+            <h1 class="fw-bolder">Admin</h1>
+            <p class="lead fw-normal text-muted mb-0">Database Management</p>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="accordion" id="adminAccordion">
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingUsers">
+                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseUsers" aria-expanded="true" aria-controls="collapseUsers">
+                        <i class="bi bi-people-fill me-2"></i> Registered Users ({{ users|length }})
+                    </button>
+                </h2>
+                <div id="collapseUsers" class="accordion-collapse collapse show" aria-labelledby="headingUsers" data-bs-parent="#adminAccordion">
+                    <div class="accordion-body">
+                        {% if users %}
+                            <ul class="list-group">
+                                {% for user in users %}
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div>
+                                            {% if user.profile_picture_url %}<img src="{{ user.profile_picture_url }}" class="rounded-circle me-2" height="30" alt="User Photo">{% else %}<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" fill="currentColor" class="bi bi-person-circle me-2" viewBox="0 0 16 16"><path d="M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/><path fill-rule="evenodd" d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1z"/></svg>{% endif %}
+                                            <strong>{{ user.firstName }} {{ user.lastName }}</strong> ({{ user.email }})
+                                        </div>
+                                        <div class="d-flex align-items-center">
+                                            {% set otp_key = 'otp_for_' + user.email %}
+                                            {% if session[otp_key] %}
+                                                {% if user.token_status == 'valid' %}
+                                                    <span class="badge bg-success me-3">{{ session[otp_key] }}</span>
+                                                {% elif user.token_status == 'expired' %}
+                                                    <span class="badge bg-danger me-3">{{ session[otp_key] }}</span>
+                                                {% endif %}
+                                            {% endif %}
+                                            
+                                            <span class="me-3" style="width: 24px; text-align: center;">
+                                                {% if user.auth_provider == 'google' %}
+                                                    <i class="bi bi-google" title="Google Login"></i>
+                                                {% elif user.auth_provider == 'local' %}
+                                                    <i class="bi bi-key-fill" title="Local Password"></i>
+                                                {% endif %}
+                                            </span>
+
+                                            <form action="{{ url_for('delete_user', user_id=user.id) }}" method="POST" onsubmit="return confirm('Are you sure you want to delete this user?');">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                            </form>
+                                        </div>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="text-muted">No registered users found.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingPromotions">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapsePromotions" aria-expanded="false" aria-controls="collapsePromotions">
+                        <i class="bi bi-star-fill me-2"></i> Promoted Studies ({{ promoted_list|length }})
+                    </button>
+                </h2>
+                <div id="collapsePromotions" class="accordion-collapse collapse" aria-labelledby="headingPromotions" data-bs-parent="#adminAccordion">
+                    <div class="accordion-body">
+                        
+                        <form action="{{ url_for('add_promotion') }}" method="POST" class="mb-4 p-3 border rounded bg-light">
+                            <label for="nct_id" class="form-label"><strong>Add Promoted Study</strong></label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="nct_id" name="nct_id" placeholder="NCT12345678" required>
+                                <button class="btn btn-primary" type="submit">Add</button>
+                            </div>
+                            <div class="form-text">Enter an NCT ID to pin it to the top of relevant search results.</div>
+                        </form>
+
+                        <h5 class="mb-3">Current Promotions</h5>
+                        {% if promoted_list %}
+                            <ul class="list-group">
+                                {% for study in promoted_list %}
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong class="font-monospace">{{ study.nct_id }}</strong>
+                                            <span class="text-muted small ms-2">(Added: {{ study.added_at.strftime('%Y-%m-%d') }})</span>
+                                        </div>
+                                        <form action="{{ url_for('remove_promotion', nct_id=study.nct_id) }}" method="POST" onsubmit="return confirm('Remove this promotion?');">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                        </form>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="text-muted">No promoted studies found.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingContacts">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseContacts" aria-expanded="false" aria-controls="collapseContacts">
+                        <i class="bi bi-envelope-fill me-2"></i> Contact Form Messages ({{ contacts|length }})
+                    </button>
+                </h2>
+                <div id="collapseContacts" class="accordion-collapse collapse" aria-labelledby="headingContacts" data-bs-parent="#adminAccordion">
+                    <div class="accordion-body">
+                        {% if contacts %}
+                            <ul class="list-group">
+                                {% for contact in contacts %}
+                                    <li class="list-group-item">
+                                        <div class="d-flex w-100 justify-content-between">
+                                            <h5 class="mb-1">{{ contact.firstName }} {{ contact.lastName }} <small class="text-muted">({{ contact.email }})</small></h5>
+                                            <form action="{{ url_for('delete_contact', contact_id=contact.id) }}" method="POST" onsubmit="return confirm('Are you sure you want to delete this message?');">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                            </form>
+                                        </div>
+                                        <p class="mb-1 mt-2">{{ contact.message }}</p>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                             <p class="text-muted">No contact messages found.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-light border-danger mt-5">
+            <div class="card-body text-center">
+                <h5 class="card-title text-danger">Danger Zone</h5>
+                <p class="card-text">This action will permanently delete all user accounts (except for your own) and all contact messages. This cannot be undone.</p>
+                <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#confirmDeleteModal">
+                    <i class="bi bi-trash-fill me-2"></i> Clear All Database Entries
+                </button>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-labelledby="confirmDeleteModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmDeleteModalLabel">Confirm Deletion</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                Are you absolutely sure you want to delete all user and contact data? This action cannot be reversed.
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ url_for('clear_data') }}" method="POST">
+                    <button type="submit" class="btn btn-danger">Yes, I'm Sure. Delete Everything.</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

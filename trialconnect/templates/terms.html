@@ -1,0 +1,56 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Terms and Conditions - trialconnect
+{% endblock %}
+
+{% block content %}
+<section class="py-5">
+    <div class="container px-4 px-lg-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-10 col-xl-8">
+                <div class="text-center mb-5">
+                    <h1 class="fw-bolder">Terms and Conditions</h1>
+                    <p class="lead fw-normal text-muted">Last Updated: September 12, 2025</p>
+                </div>
+
+                <div class="card shadow-sm border-0 rounded-lg">
+                    <div class="card-body p-4 p-md-5">
+                        
+                        <h4 class="fw-bolder mb-3">1. Agreement to Terms</h4>
+                        <p class="mb-4">By creating an account and using the TrialConnect service (the "Service"), you agree to be bound by these Terms and Conditions. If you do not agree to these terms, you may not use the Service. We reserve the right to modify these terms at any time, and we will notify you of any changes by updating the "Last Updated" date of these Terms and Conditions.</p>
+
+                        <h4 class="fw-bolder mb-3">2. User Accounts</h4>
+                        <p>To use the Service, you must register for an account. You agree to provide accurate, current, and complete information during the registration process. You are responsible for safeguarding your password and for all activities that occur under your account. You must notify us immediately of any unauthorized use of your account.</p>
+
+                        <h4 class="fw-bolder mb-3">3. Acceptable Use</h4>
+                        <p>You agree not to use the Service for any unlawful purpose or in any way that could harm, disable, overburden, or impair the Service. Prohibited activities include, but are not limited to:</p>
+                        <ul class="mb-4">
+                            <li>Uploading or sharing any content that is illegal, defamatory, obscene, or discriminatory.</li>
+                            <li>Attempting to gain unauthorized access to other user accounts or to the Service's systems or networks.</li>
+                            <li>Using the Service to send unsolicited communications (spam).</li>
+                            <li>Impersonating any person or entity, or falsely stating or otherwise misrepresenting your affiliation with a person or entity.</li>
+                        </ul>
+
+                        <h4 class="fw-bolder mb-3">4. Intellectual Property</h4>
+                        <p class="mb-4">The Service and its original content, features, and functionality are and will remain the exclusive property of TrialConnect and its licensors. Our trademarks and trade dress may not be used in connection with any product or service without the prior written consent of TrialConnect.</p>
+
+                        <h4 class="fw-bolder mb-3">5. Termination</h4>
+                        <p class="mb-4">We may terminate or suspend your account and bar access to the Service immediately, without prior notice or liability, for any reason whatsoever, including without limitation if you breach the Terms. You may terminate your own account at any time from your profile page.</p>
+
+                        <h4 class="fw-bolder mb-3">6. Limitation of Liability</h4>
+                        <p class="mb-4">In no event shall TrialConnect, nor its directors, employees, partners, agents, suppliers, or affiliates, be liable for any indirect, incidental, special, consequential or punitive damages, including without limitation, loss of profits, data, use, goodwill, or other intangible losses, resulting from your access to or use of or inability to access or use the Service.</p>
+                        
+                        <h4 class="fw-bolder mb-3">7. Governing Law</h4>
+                        <p class="mb-4">These Terms shall be governed and construed in accordance with the laws of the jurisdiction in which TrialConnect is headquartered, without regard to its conflict of law provisions.</p>
+                        
+                        <h4 class="fw-bolder mb-3">8. Contact Us</h4>
+                        <p class="mb-0">If you have any questions about these Terms, please <a href="{{ url_for('contact') }}">contact us</a>.</p>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

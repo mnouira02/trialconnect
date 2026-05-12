@@ -1,0 +1,54 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Privacy Policy - trialconnect
+{% endblock %}
+
+{% block content %}
+<section class="py-5">
+    <div class="container px-4 px-lg-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-10 col-xl-8">
+                <div class="text-center mb-5">
+                    <h1 class="fw-bolder">Privacy Policy</h1>
+                    <p class="lead fw-normal text-muted">Last Updated: September 12, 2025</p>
+                </div>
+
+                <div class="card shadow-sm border-0 rounded-lg">
+                    <div class="card-body p-4 p-md-5">
+                        
+                        <h4 class="fw-bolder mb-3">1. Introduction</h4>
+                        <p class="mb-4">This Privacy Policy describes how TrialConnect ("we," "us," or "our") collects, uses, and shares your personal information when you use our website and services (the "Service"). By using the Service, you agree to the collection and use of information in accordance with this policy.</p>
+
+                        <h4 class="fw-bolder mb-3">2. Information We Collect</h4>
+                        <p>We collect several different types of information for various purposes to provide and improve our Service to you.</p>
+                        <ul class="mb-4">
+                            <li><strong>Personal Data:</strong> While using our Service, we may ask you to provide us with certain personally identifiable information that can be used to contact or identify you ("Personal Data"). This includes, but is not limited to, your first name, last name, and email address.</li>
+                            <li><strong>Usage Data:</strong> We may also collect information that your browser sends whenever you visit our Service ("Usage Data"). This may include information such as your computer's IP address, browser type, browser version, the pages of our Service that you visit, and the time and date of your visit.</li>
+                            <li><strong>Tracking & Cookies Data:</strong> We use cookies and similar tracking technologies to track the activity on our Service and hold certain information. You can instruct your browser to refuse all cookies or to indicate when a cookie is being sent.</li>
+                        </ul>
+
+                        <h4 class="fw-bolder mb-3">3. Use of Data</h4>
+                        <p class="mb-4">TrialConnect uses the collected data for various purposes, including to provide and maintain the Service, to manage your account, to notify you about changes to our Service, and to provide customer support.</p>
+
+                        <h4 class="fw-bolder mb-3">4. Data Security</h4>
+                        <p class="mb-4">The security of your data is important to us, but remember that no method of transmission over the Internet or method of electronic storage is 100% secure. While we strive to use commercially acceptable means to protect your Personal Data, we cannot guarantee its absolute security.</p>
+                        
+                        <h4 class="fw-bolder mb-3">5. Service Providers</h4>
+                        <p class="mb-4">We may employ third-party companies and individuals to facilitate our Service ("Service Providers"), such as Google for authentication purposes. These third parties have access to your Personal Data only to perform these tasks on our behalf and are obligated not to disclose or use it for any other purpose.</p>
+
+                        <h4 class="fw-bolder mb-3">6. Your Data Rights</h4>
+                        <p class="mb-4">You have the right to access, update, or delete the information we have on you. You can access and update your information directly within your profile settings section. If you wish to delete your account, you may do so from your profile page.</p>
+
+                        <h4 class="fw-bolder mb-3">7. Changes to This Privacy Policy</h4>
+                        <p class="mb-4">We may update our Privacy Policy from time to time. We will notify you of any changes by posting the new Privacy Policy on this page and updating the "Last Updated" date at the top.</p>
+
+                        <h4 class="fw-bolder mb-3">8. Contact Us</h4>
+                        <p class="mb-0">If you have any questions about this Privacy Policy, please <a href="{{ url_for('contact') }}">contact us</a>.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

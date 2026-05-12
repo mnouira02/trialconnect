@@ -1,0 +1,217 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Register - trialconnect
+{% endblock %}
+
+{% block content %}
+<section class="py-5">
+    <!-- Smart padding for different screen sizes -->
+    <div class="container px-4 px-lg-5">
+        <div class="row justify-content-center">
+            <!-- Adaptive column width -->
+            <div class="col-md-10 col-lg-8 col-xl-7">
+                <div class="card shadow-lg border-0 rounded-lg mt-5">
+                    <div class="card-header"><h3 class="text-center fw-bolder my-4">Create Account</h3></div>
+                    <!-- Smart padding inside the card -->
+                    <div class="card-body p-4 p-md-5">
+                        <form method="POST" action="{{ url_for('register') }}">
+                            <!-- First Name and Last Name -->
+                            <div class="row gx-3 mb-3">
+                                <!-- Margin for mobile stacking -->
+                                <div class="col-md-6 mb-3 mb-md-0">
+                                    <div class="form-floating">
+                                        <input class="form-control" id="firstName" name="firstName" type="text" placeholder="First Name" required autocomplete="off"/>
+                                        <label for="firstName">First name</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-floating">
+                                        <input class="form-control" id="lastName" name="lastName" type="text" placeholder="Last Name" required autocomplete="off"/>
+                                        <label for="lastName">Last name</label>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Birth Year -->
+                            <div class="row gx-3 mb-3">
+                                <div class="col-md-6 mb-3 mb-md-0">
+                                    <div class="form-floating">
+                                        <input class="form-control" id="birthYear" name="birthYear" type="number" placeholder="1990" min="1900" max="{{ now.year }}" required autocomplete="off"/>
+                                        <label for="birthYear">Birth Year</label>
+                                    </div>
+                                </div>
+
+                                <!-- Sex Fields -->
+                                <div class="col-md-6">
+                                    <div class="form-floating">
+                                        <select class="form-select" id="sex" name="sex" required>
+                                            <option value="" disabled selected>Select an option...</option>
+                                            <option value="Male">Male</option>
+                                            <option value="Female">Female</option>
+                                            <option value="Non-binary">Non-binary</option>
+                                            <option value="Prefer not to say">Prefer not to say</option>
+                                        </select>
+                                        <label for="sex">Sex</label>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Email -->
+                            <div class="form-floating mb-3">
+                                <input class="form-control" id="email" name="email" type="email" placeholder="name@example.com" autocomplete="username" required />
+                                <label for="email">Email address</label>
+                            </div>
+
+                            <!-- Password and Confirm Password with Visibility Toggle -->
+                            <div class="row gx-3 mb-3">
+                                <!-- Margin for mobile stacking -->
+                                <div class="col-md-6 mb-3 mb-md-0">
+                                    <label for="password" class="form-label">Password</label>
+                                    <div class="input-group">
+                                        <input class="form-control" id="password" name="password" type="password" placeholder="Create a password" autocomplete="new-password" required />
+                                        <button class="btn btn-outline-secondary" type="button" id="toggle-password"><i class="bi bi-eye"></i></button>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="confirm_password" class="form-label">Confirm Password</label>
+                                    <div class="input-group">
+                                        <input class="form-control" id="confirm_password" name="confirm_password" type="password" placeholder="Confirm password" autocomplete="new-password" required />
+                                        <button class="btn btn-outline-secondary" type="button" id="toggle-confirm-password"><i class="bi bi-eye"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Password Validation Box -->
+                            <div id="password-validation-box" class="card bg-light p-3 mb-3 d-none">
+                                <p id="length" class="mb-1 small">At least 8 characters</p>
+                                <p id="uppercase" class="mb-1 small">At least one uppercase letter (A-Z)</p>
+                                <p id="lowercase" class="mb-1 small">At least one lowercase letter (a-z)</p>
+                                <p id="number" class="mb-1 small">At least one number (0-9)</p>
+                                <p id="match" class="mb-0 small">Passwords must match</p>
+                            </div>
+
+                            <!-- Terms and Privacy Policy Agreement -->
+                            <div class="form-check mb-4">
+                                <input class="form-check-input" type="checkbox" value="agreed" id="agreement" name="agreement" required>
+                                <label class="form-check-label" for="agreement">
+                                    I have read and agree to the <a href="{{ url_for('terms') }}" target="_blank">Terms & Conditions</a> and the <a href="{{ url_for('privacy') }}" target="_blank">Privacy Policy</a>.
+                                </label>
+                            </div>
+
+                            <!-- Submit Button -->
+                            <div class="d-grid">
+                                <button class="btn btn-primary btn-lg" id="register-button" type="submit" disabled>Create Account</button>
+                            </div>
+                        </form>
+
+                        <!-- Divider -->
+                        <div class="my-4 d-flex align-items-center">
+                            <hr class="flex-grow-1">
+                            <span class="px-3 text-muted">OR</span>
+                            <hr class="flex-grow-1">
+                        </div>
+
+                        <!-- Google Sign-In Button -->
+                        <div class="d-grid">
+                            <a class="btn btn-danger btn-lg" href="{{ url_for('login_google') }}">
+                                <i class="bi bi-google me-2"></i> Continue with Google
+                            </a>
+                        </div>
+                    </div>
+                    <div class="card-footer text-center py-3">
+                        <div class="small"><a href="{{ url_for('login') }}">Have an account? Go to login</a></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Setup for Password Visibility Toggles
+        function setupPasswordToggle(inputId, buttonId) {
+            const inputField = document.getElementById(inputId);
+            const toggleButton = document.getElementById(buttonId);
+            
+            toggleButton.setAttribute('tabindex', '-1');
+
+            toggleButton.addEventListener('mousedown', () => { inputField.type = 'text'; });
+            toggleButton.addEventListener('mouseup', () => { inputField.type = 'password'; });
+            toggleButton.addEventListener('mouseleave', () => { inputField.type = 'password'; });
+        }
+
+        // Setup for Password Strength Validation
+        const passwordInput = document.getElementById('password');
+        const confirmPasswordInput = document.getElementById('confirm_password');
+        const validationBox = document.getElementById('password-validation-box');
+        const registerButton = document.getElementById('register-button');
+        const criteria = {
+            length: document.getElementById('length'),
+            uppercase: document.getElementById('uppercase'),
+            lowercase: document.getElementById('lowercase'),
+            number: document.getElementById('number'),
+            match: document.getElementById('match')
+        };
+        function validatePassword() {
+            const password = passwordInput.value;
+            const confirmPassword = confirmPasswordInput.value;
+            if (password.length > 0 || confirmPassword.length > 0) {
+                validationBox.classList.remove('d-none');
+            } else {
+                validationBox.classList.add('d-none');
+            }
+            const validations = {
+                length: password.length >= 8,
+                uppercase: /[A-Z]/.test(password),
+                lowercase: /[a-z]/.test(password),
+                number: /[0-9]/.test(password),
+                match: password === confirmPassword && password.length > 0
+            };
+            let allValid = true;
+            for (const key in validations) {
+                if (validations[key]) {
+                    criteria[key].style.color = 'green';
+                    criteria[key].style.fontWeight = 'bold';
+                } else {
+                    criteria[key].style.color = 'black';
+                    criteria[key].style.fontWeight = 'normal';
+                    allValid = false;
+                }
+            }
+            registerButton.disabled = !allValid;
+        }
+
+        // Initialize both features
+        setupPasswordToggle('password', 'toggle-password');
+        setupPasswordToggle('confirm_password', 'toggle-confirm-password');
+        passwordInput.addEventListener('input', validatePassword);
+        confirmPasswordInput.addEventListener('input', validatePassword);
+
+
+        // Form Validation for Required Fields
+        const form = document.querySelector('form');
+                // This selector now correctly includes the single agreement checkbox
+                const requiredInputs = form.querySelectorAll('input[required], select[required]');
+
+                function validateForm() {
+                    let allValid = true;
+                    for (const input of requiredInputs) {
+                        if (input.type === 'checkbox') {
+                            if (!input.checked) allValid = false;
+                        } else {
+                            if (input.value.trim() === '') allValid = false;
+                        }
+                    }
+                    registerButton.disabled = !allValid;
+                }
+
+                form.addEventListener('input', validateForm);
+                form.addEventListener('change', validateForm); // Handles clicks on checkboxes/select
+                validateForm(); // Initial check on page load
+    });
+</script>
+{% endblock %}

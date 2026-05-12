@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.eggs/
+dist/
+build/
+*.egg-info/
+
+# Sensitive Files
+google_secret.json
+.env
+
+# Database Files
+*.db
+*.sqlite3
+
+# Editor & OS Files
+.vscode/
+.idea/
+*.DS_Store

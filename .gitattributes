@@ -1,0 +1,16 @@
+# Auto-detect text files and normalize to LF in the repo
+* text=auto eol=lf
+
+# Explicitly declare binary files so Git never touches their endings
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.db  binary
+*.sqlite binary
+*.pdf binary
+
+# Windows batch files must stay CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf

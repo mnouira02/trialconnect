@@ -1,0 +1,227 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Your Profile - trialconnect
+{% endblock %}
+
+{% block content %}
+<section class="py-5">
+    <div class="container px-4 px-lg-5">
+        <div class="row justify-content-center">
+            <div class="col-md-10 col-lg-8 col-xl-7">
+                <div class="card shadow-lg border-0 rounded-lg mt-5">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h3 class="text-center fw-bolder my-4 flex-grow-1">Edit Profile</h3>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#confirmDeleteModal" title="Delete Account">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                    <div class="card-body p-4 p-md-5">
+                        <form method="POST" action="{{ url_for('profile') }}" enctype="multipart/form-data">
+                            
+                            <div class="text-center mb-4">
+                                <div id="profile-container">
+                                    {% if user.profile_picture_url %}
+                                        <img id="image-preview" src="{{ user.profile_picture_url }}" alt="Profile Picture">
+                                    {% else %}
+                                        <svg id="image-preview" xmlns="http://www.w3.org/2000/svg" fill="currentColor" class="bi bi-person-fill text-secondary" viewBox="0 0 16 16">
+                                            <path d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>
+                                        </svg>
+                                    {% endif %}
+                                    <div id="upload-overlay"><i class="bi bi-camera-fill" style="font-size: 2rem;"></i></div>
+                                </div>
+                                <input class="d-none" type="file" id="profile_picture" name="profile_picture" accept="image/png, image/jpeg, image/gif">
+                            </div>
+                            
+                            <div class="row gx-3 mb-3">
+                                <div class="col-md-6 mb-3 mb-md-0"><div class="form-floating"><input class="form-control" id="firstName" name="firstName" type="text" placeholder="First Name" value="{{ user.firstName }}" required /><label for="firstName">First name</label></div></div>
+                                <div class="col-md-6"><div class="form-floating"><input class="form-control" id="lastName" name="lastName" type="text" placeholder="Last Name" value="{{ user.lastName }}" required /><label for="lastName">Last name</label></div></div>
+                            </div>
+                            <div class="form-floating mb-3"><input class="form-control" id="email" name="email" type="email" value="{{ user.email }}" readonly title="Email cannot be changed for security reasons."><label for="email">Email address</label></div>
+                            
+                            <div class="row gx-3 mb-4">
+                                <div class="col-md-6 mb-3 mb-md-0">
+                                    <div class="form-floating">
+                                        <input class="form-control" id="birthYear" name="birthYear" type="number" placeholder="1990" value="{{ user.birthYear }}" min="1900" max="{{ now.year }}" required autocomplete="off"/>
+                                        <label for="birthYear">Birth Year</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-floating">
+                                        <select class="form-select" id="sex" name="sex" required>
+                                            <option value="" disabled>Select an option...</option>
+                                            <option value="Male" {% if user.sex == 'Male' %}selected{% endif %}>Male</option>
+                                            <option value="Female" {% if user.sex == 'Female' %}selected{% endif %}>Female</option>
+                                            <option value="Non-binary" {% if user.sex == 'Non-binary' %}selected{% endif %}>Non-binary</option>
+                                            <option value="Prefer not to say" {% if user.sex == 'Prefer not to say' %}selected{% endif %}>Prefer not to say</option>
+                                        </select>
+                                        <label for="sex">Sex</label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr class="my-4">
+
+                            <h5 class="mb-3 text-center text-muted">Change Password</h5>
+                            <div class="form-floating mb-3"><input class="form-control" id="current_password" name="current_password" type="password" placeholder="Current Password" /><label for="current_password">Current Password</label></div>
+                            <div class="row gx-3 mb-3">
+                                <div class="col-md-6 mb-3 mb-md-0"><div class="form-floating"><input class="form-control" id="new_password" name="new_password" type="password" placeholder="New Password" /><label for="new_password">New Password</label></div></div>
+                                <div class="col-md-6"><div class="form-floating"><input class="form-control" id="confirm_password" name="confirm_password" type="password" placeholder="Confirm New Password" /><label for="confirm_password">Confirm New Password</label></div></div>
+                            </div>
+                            <div id="password-validation-box" class="card bg-light p-3 mb-4 d-none">
+                                <p id="length" class="mb-1 small">At least 8 characters</p>
+                                <p id="uppercase" class="mb-1 small">At least one uppercase letter (A-Z)</p>
+                                <p id="lowercase" class="mb-1 small">At least one lowercase letter (a-z)</p>
+                                <p id="number" class="mb-1 small">At least one number (0-9)</p>
+                                <p id="match" class="mb-0 small">New passwords must match</p>
+                            </div>
+
+                            <div class="d-grid"><button class="btn btn-primary btn-lg" id="save-button" type="submit">Save</button></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-labelledby="confirmDeleteModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmDeleteModalLabel">Confirm Account Deletion</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                Are you sure you want to permanently delete your account? This action cannot be undone. All of your data will be removed.
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ url_for('delete_account') }}" method="POST" class="m-0">
+                    <button type="submit" class="btn btn-danger">Yes, Delete My Account</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        
+        // --- Image Preview Logic (Unchanged) ---
+        const profileContainer = document.getElementById('profile-container');
+        const fileInput = document.getElementById('profile_picture');
+        const imagePreview = document.getElementById('image-preview');
+        if (profileContainer) {
+            profileContainer.addEventListener('click', () => fileInput.click());
+        }
+        if (fileInput) {
+            fileInput.addEventListener('change', function() {
+                const file = this.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => { imagePreview.src = e.target.result; };
+                    reader.readAsDataURL(file);
+                }
+            });
+        }
+
+        // --- NEW UNIFIED VALIDATION LOGIC ---
+
+        // Get ALL form inputs
+        const saveButton = document.getElementById('save-button');
+        const firstNameInput = document.getElementById('firstName');
+        const lastNameInput = document.getElementById('lastName');
+        const birthYearInput = document.getElementById('birthYear');
+        const sexInput = document.getElementById('sex');
+
+        const currentPasswordInput = document.getElementById('current_password');
+        const newPasswordInput = document.getElementById('new_password');
+        const confirmPasswordInput = document.getElementById('confirm_password');
+        
+        const validationBox = document.getElementById('password-validation-box');
+        const criteria = {
+            length: document.getElementById('length'), 
+            uppercase: document.getElementById('uppercase'),
+            lowercase: document.getElementById('lowercase'), 
+            number: document.getElementById('number'),
+            match: document.getElementById('match')
+        };
+
+        // This is our single function to check the whole form
+        function validateFullForm() {
+            
+            // 1. Check Profile Fields (These are always required)
+            const profileFieldsValid = 
+                firstNameInput.value.trim().length > 0 &&
+                lastNameInput.value.trim().length > 0 &&
+                birthYearInput.value.length > 0 &&  // Assuming HTML 'required' handles content
+                sexInput.value.length > 0;          // Assuming HTML 'required' handles content
+
+            // 2. Check Password Fields
+            const current = currentPasswordInput.value;
+            const password = newPasswordInput.value;
+            const confirm = confirmPasswordInput.value;
+
+            const isPasswordChangeAttempt = current.length > 0 || password.length > 0 || confirm.length > 0;
+            let passwordFieldsValid = false;
+
+            if (isPasswordChangeAttempt) {
+                // User is trying to change password, so we must validate
+                validationBox.classList.remove('d-none');
+                
+                const validations = {
+                    length: password.length >= 8,
+                    uppercase: /[A-Z]/.test(password),
+                    lowercase: /[a-z]/.test(password),
+                    number: /[0-9]/.test(password),
+                    match: password === confirm && password.length > 0
+                };
+                
+                let allRulesMet = true;
+                for (const key in validations) {
+                    if (validations[key]) {
+                        criteria[key].style.color = 'green';
+                        criteria[key].style.fontWeight = 'bold';
+                    } else {
+                        criteria[key].style.color = 'black';
+                        criteria[key].style.fontWeight = 'normal';
+                        allRulesMet = false;
+                    }
+                }
+                
+                // Password section is valid ONLY IF all rules are met AND current password is provided
+                passwordFieldsValid = allRulesMet && current.length > 0;
+
+            } else {
+                // User is NOT changing password, so this section is valid by default.
+                validationBox.classList.add('d-none');
+                passwordFieldsValid = true; 
+            }
+            
+            // 3. FINAL DECISION: Enable save only if profile is valid AND password section is valid.
+            saveButton.disabled = !(profileFieldsValid && passwordFieldsValid);
+        }
+
+        // Attach the listener to EVERY input field on the form
+        const allInputs = [
+            firstNameInput, lastNameInput, birthYearInput, sexInput,
+            currentPasswordInput, newPasswordInput, confirmPasswordInput
+        ];
+
+        allInputs.forEach(input => {
+            if (input) {
+                // Use 'input' for text fields, 'change' for select dropdowns
+                const eventType = (input.tagName === 'SELECT') ? 'change' : 'input';
+                input.addEventListener(eventType, validateFullForm);
+            }
+        });
+
+        // Run once on page load to set the correct initial state
+        validateFullForm();
+    });
+</script>
+{% endblock %}
