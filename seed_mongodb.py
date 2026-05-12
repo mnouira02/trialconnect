@@ -2,15 +2,17 @@
 """
 seed_mongodb.py
 
-One-time script to populate the MongoDB Atlas 'trials' collection.
+Resumable seed script — safely restart any time.
+Trials that already have an embedding in MongoDB are skipped entirely.
 
 What it does:
   1. Fetches trials from ClinicalTrials.gov for a list of common conditions
-  2. Generates a Vertex AI text embedding for each trial's eligibility criteria
-  3. Inserts / upserts everything into MongoDB Atlas trialconnect.trials
-  4. Creates a text index on brief_title + conditions_str (fallback search)
+  2. Upserts trial metadata into MongoDB (always, so data stays fresh)
+  3. Generates Vertex AI embeddings ONLY for trials missing one
+  4. Updates those trials with their embedding
+  5. Creates a text index on brief_title + conditions_str (fallback search)
 
-Run once from the repo root (with .venv active):
+Run from repo root (with .venv active):
     python seed_mongodb.py
 
 Requirements in .env:
@@ -19,7 +21,7 @@ Requirements in .env:
     VERTEX_AI_LOCATION  (optional, defaults to us-central1)
 """
 
-import os, math, time, requests, warnings
+import os, time, requests, warnings
 from dotenv import load_dotenv
 from pymongo import MongoClient, UpdateOne
 from pymongo.errors import BulkWriteError
@@ -32,11 +34,10 @@ GCP_PROJECT        = os.environ['GOOGLE_CLOUD_PROJECT']
 VERTEX_LOCATION    = os.environ.get('VERTEX_AI_LOCATION', 'us-central1')
 DB_NAME            = 'trialconnect'
 COLLECTION_NAME    = 'trials'
-BATCH_SIZE         = 50          # upsert batch size
-EMBED_BATCH_SIZE   = 5           # Vertex AI calls per batch (rate-limit friendly)
-MAX_TRIALS_PER_CONDITION = 200   # keep seed manageable
+BATCH_SIZE         = 50
+EMBED_BATCH_SIZE   = 5
+MAX_TRIALS_PER_CONDITION = 200
 
-# Conditions to seed — covers the most common search terms
 CONDITIONS = [
     "asthma",
     "diabetes type 2",
@@ -58,7 +59,6 @@ CONDITIONS = [
 # ------------------------------------------------------------------ helpers
 
 def fetch_trials(condition, max_results=MAX_TRIALS_PER_CONDITION):
-    """Fetch trials from ClinicalTrials.gov v2 API for a given condition."""
     url = "https://clinicaltrials.gov/api/v2/studies"
     params = {
         "query.term": condition,
@@ -107,32 +107,27 @@ def fetch_trials(condition, max_results=MAX_TRIALS_PER_CONDITION):
         eligibility_text = elig_mod.get('eligibilityCriteria', '')
 
         trials.append({
-            'nct_id':          id_mod.get('nctId'),
-            'brief_title':     id_mod.get('briefTitle'),
-            'overall_status':  stat_mod.get('overallStatus'),
-            'conditions':      conditions_list,
-            'conditions_str':  ', '.join(conditions_list),
+            'nct_id':               id_mod.get('nctId'),
+            'brief_title':          id_mod.get('briefTitle'),
+            'overall_status':       stat_mod.get('overallStatus'),
+            'conditions':           conditions_list,
+            'conditions_str':       ', '.join(conditions_list),
             'eligibility_criteria': eligibility_text,
-            'minimum_age':     elig_mod.get('minimumAge'),
-            'maximum_age':     elig_mod.get('maximumAge'),
-            'sex':             elig_mod.get('sex', 'ALL'),
-            'locations':       locations,
-            'seed_condition':  condition,
+            'minimum_age':          elig_mod.get('minimumAge'),
+            'maximum_age':          elig_mod.get('maximumAge'),
+            'sex':                  elig_mod.get('sex', 'ALL'),
+            'locations':            locations,
+            'seed_condition':       condition,
         })
     return trials
 
 
 def get_embeddings_batch(texts):
-    """
-    Generate embeddings for a list of texts using Vertex AI text-embedding-004.
-    Returns list of float vectors (or None per item on failure).
-    """
     try:
         import vertexai
         from vertexai.language_models import TextEmbeddingModel
         vertexai.init(project=GCP_PROJECT, location=VERTEX_LOCATION)
         model = TextEmbeddingModel.from_pretrained('text-embedding-004')
-        # Truncate to 2048 chars to stay within token limits
         truncated = [t[:2048] if t else '' for t in texts]
         results = model.get_embeddings(truncated)
         return [r.values for r in results]
@@ -142,11 +137,18 @@ def get_embeddings_batch(texts):
 
 
 def upsert_batch(collection, docs):
-    """Upsert a batch of trial docs by nct_id."""
-    ops = [
-        UpdateOne({'nct_id': d['nct_id']}, {'$set': d}, upsert=True)
-        for d in docs if d.get('nct_id')
-    ]
+    """Upsert trial metadata (without overwriting existing embeddings)."""
+    ops = []
+    for d in docs:
+        if not d.get('nct_id'):
+            continue
+        # $set only the non-embedding fields; $setOnInsert won't overwrite embeddings on update
+        meta = {k: v for k, v in d.items() if k != 'eligibility_criteria_embedding'}
+        ops.append(UpdateOne(
+            {'nct_id': d['nct_id']},
+            {'$set': meta},
+            upsert=True
+        ))
     if not ops:
         return 0
     try:
@@ -160,7 +162,7 @@ def upsert_batch(collection, docs):
 # ------------------------------------------------------------------ main
 
 def main():
-    print("\n=== TrialConnect MongoDB Seed Script ===")
+    print("\n=== TrialConnect MongoDB Seed Script (Resumable) ===")
     print(f"  Project : {GCP_PROJECT}")
     print(f"  DB      : {DB_NAME}.{COLLECTION_NAME}")
     print(f"  Seeding {len(CONDITIONS)} conditions, up to {MAX_TRIALS_PER_CONDITION} trials each\n")
@@ -169,7 +171,7 @@ def main():
     db = client[DB_NAME]
     col = db[COLLECTION_NAME]
 
-    # Create text index for fallback keyword search
+    # Ensure text index
     print("[1/4] Ensuring text index...")
     try:
         col.create_index(
@@ -181,60 +183,83 @@ def main():
     except Exception as e:
         print(f"      [WARN] Text index: {e}")
 
-    # Fetch all trials
+    # Fetch all trials from CT.gov
     print("\n[2/4] Fetching trials from ClinicalTrials.gov...")
     all_trials = {}
     for cond in CONDITIONS:
         trials = fetch_trials(cond)
         for t in trials:
             if t['nct_id']:
-                all_trials[t['nct_id']] = t  # deduplicate by NCT ID
-        print(f"      {cond:30s} → {len(trials):4d} trials  (total unique: {len(all_trials)})")
-        time.sleep(0.3)  # be polite to the API
+                all_trials[t['nct_id']] = t
+        print(f"      {cond:30s} \u2192 {len(trials):4d} trials  (total unique: {len(all_trials)})")
+        time.sleep(0.3)
 
     trials_list = list(all_trials.values())
-    print(f"\n      Total unique trials to seed: {len(trials_list)}")
+    print(f"\n      Total unique trials fetched: {len(trials_list)}")
 
-    # Generate embeddings
-    print("\n[3/4] Generating embeddings with Vertex AI text-embedding-004...")
-    embed_ok = 0
-    embed_fail = 0
-    for i in range(0, len(trials_list), EMBED_BATCH_SIZE):
-        batch = trials_list[i:i + EMBED_BATCH_SIZE]
-        texts = [t.get('eligibility_criteria', '') or t.get('brief_title', '') for t in batch]
-        vectors = get_embeddings_batch(texts)
-        for trial, vec in zip(batch, vectors):
-            if vec:
-                trial['eligibility_criteria_embedding'] = vec
-                embed_ok += 1
-            else:
-                embed_fail += 1
-        # Progress every 10 batches
-        if (i // EMBED_BATCH_SIZE) % 10 == 0:
-            pct = min(100, round(i / len(trials_list) * 100))
-            print(f"      {pct:3d}%  ({i}/{len(trials_list)})  ok={embed_ok} fail={embed_fail}")
-        time.sleep(0.2)  # rate limit
-
-    print(f"      Done. Embedded: {embed_ok}  Skipped: {embed_fail}")
-
-    # Upsert into MongoDB
-    print("\n[4/4] Upserting into MongoDB Atlas...")
+    # Upsert metadata first (fast, no embeddings yet)
+    print("\n[3/4] Upserting trial metadata into MongoDB...")
     total_written = 0
     for i in range(0, len(trials_list), BATCH_SIZE):
         batch = trials_list[i:i + BATCH_SIZE]
-        written = upsert_batch(col, batch)
-        total_written += written
-        pct = min(100, round(i / len(trials_list) * 100))
-        print(f"      {pct:3d}%  upserted so far: {total_written}")
+        total_written += upsert_batch(col, batch)
+    print(f"      Metadata upserted: {total_written} documents")
+
+    # Find which trials are MISSING embeddings
+    print("\n[4/4] Generating embeddings for trials missing one...")
+    already_embedded = set(
+        doc['nct_id'] for doc in
+        col.find(
+            {'eligibility_criteria_embedding': {'$exists': True}},
+            {'nct_id': 1, '_id': 0}
+        )
+    )
+    needs_embedding = [t for t in trials_list if t['nct_id'] not in already_embedded]
+
+    print(f"      Already embedded : {len(already_embedded)}")
+    print(f"      Need embedding   : {len(needs_embedding)}")
+
+    if not needs_embedding:
+        print("      Nothing to do — all trials already have embeddings! \u2705")
+    else:
+        embed_ok = 0
+        embed_fail = 0
+        for i in range(0, len(needs_embedding), EMBED_BATCH_SIZE):
+            batch = needs_embedding[i:i + EMBED_BATCH_SIZE]
+            texts = [t.get('eligibility_criteria', '') or t.get('brief_title', '') for t in batch]
+            vectors = get_embeddings_batch(texts)
+
+            # Write each embedding back to MongoDB immediately
+            for trial, vec in zip(batch, vectors):
+                if vec:
+                    col.update_one(
+                        {'nct_id': trial['nct_id']},
+                        {'$set': {'eligibility_criteria_embedding': vec}}
+                    )
+                    embed_ok += 1
+                else:
+                    embed_fail += 1
+
+            # Progress every 10 batches
+            if (i // EMBED_BATCH_SIZE) % 10 == 0:
+                pct = min(100, round(i / len(needs_embedding) * 100))
+                print(f"      {pct:3d}%  ({i}/{len(needs_embedding)})  embedded={embed_ok} failed={embed_fail}")
+
+            time.sleep(0.2)
+
+        print(f"      Done. Embedded: {embed_ok}  Failed: {embed_fail}")
 
     final_count = col.count_documents({})
-    print(f"\n✅ Seed complete!")
-    print(f"   Documents in collection : {final_count}")
-    print(f"   Trials with embeddings  : {embed_ok}")
+    embedded_count = col.count_documents({'eligibility_criteria_embedding': {'$exists': True}})
+
+    print(f"\n\u2705 Seed complete!")
+    print(f"   Total documents       : {final_count}")
+    print(f"   With embeddings       : {embedded_count}")
+    print(f"   Without embeddings    : {final_count - embedded_count}")
     print()
     print("Next step: create the Atlas Vector Search index named")
     print("'eligibility_vector_index' on field 'eligibility_criteria_embedding'")
-    print("in the Atlas UI under Search Indexes → Create Index → JSON editor:")
+    print("in the Atlas UI: Search Indexes \u2192 Create Index \u2192 JSON editor:")
     print()
     print('''{
   "fields": [{
