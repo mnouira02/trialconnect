@@ -34,16 +34,14 @@
 
 <section class="py-5">
     <div class="container px-5">
-        
         <div class="row gx-5" id="results-list-container">
             <div class="col-12 text-center">
                 <p><i>Locating you and searching for trials...</i></p>
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
             </div>
         </div>
-        
     </div>
 </section>
 {% endif %}
@@ -51,200 +49,236 @@
 
 {% block scripts %}
 {% if query %}
+<style>
+/* Spinning Gemini logo badge */
+.gemini-checking {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 50px;
+    background: rgba(66,133,244,0.08);
+    border: 1px solid rgba(66,133,244,0.25);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #4285f4;
+    margin-bottom: 8px;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+.gemini-checking .gemini-icon {
+    animation: gemini-spin 1.2s linear infinite;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+@keyframes gemini-spin {
+    0%   { transform: rotate(0deg);   opacity: 1;    }
+    25%  { transform: rotate(90deg);  opacity: 0.6;  }
+    50%  { transform: rotate(180deg); opacity: 1;    }
+    75%  { transform: rotate(270deg); opacity: 0.6;  }
+    100% { transform: rotate(360deg); opacity: 1;    }
+}
+
+/* Resolved match badge */
+.match-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 50px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    margin-right: 8px;
+    cursor: pointer;
+    position: relative;
+    transition: filter 0.15s;
+}
+.match-badge:hover { filter: brightness(0.92); }
+.match-badge.match    { background:#d1fae5; border:1px solid #10b981; color:#065f46; }
+.match-badge.partial  { background:#fef9c3; border:1px solid #f59e0b; color:#92400e; }
+.match-badge.no-match { background:#fee2e2; border:1px solid #ef4444; color:#991b1b; }
+.match-badge.unknown  { background:#f3f4f6; border:1px solid #9ca3af; color:#374151; }
+.match-badge .gemini-icon { width:16px; height:16px; flex-shrink:0; }
+
+/* Reason popover */
+.match-reason-box {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 999;
+    background: #1e293b;
+    color: #f8fafc;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.8rem;
+    font-weight: 400;
+    line-height: 1.5;
+    max-width: 340px;
+    min-width: 200px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    white-space: normal;
+}
+.match-badge:hover .match-reason-box,
+.match-badge:focus .match-reason-box { display: block; }
+</style>
+
 <script>
-    // --- DEFINE GLOBAL VARIABLES ---
-    let map; 
+    let map;
     let infoWindow;
     let markerList = [];
     let isInitialLoad = true;
-    
-    // Get data passed from our server
+
     const FALLBACK_LAT = {{ fallback_lat|tojson }};
     const FALLBACK_LON = {{ fallback_lon|tojson }};
     const QUERY = {{ query|tojson }};
     const GOOGLE_MAPS_API_KEY = {{ google_maps_api_key|tojson }};
     const IS_LOGGED_IN = {{ session.get('user') is not none | tojson }};
 
-    // --- DEFINE ALL HELPER FUNCTIONS ---
-
-    /**
-     * Updates the map title with the study count.
-     */
-    function updateResultCount(count, isLoading = false) {
-        // ... (This function is unchanged) ...
-        const mapTitle = document.getElementById('map-view-title');
-        const queryText = `for</span> "${QUERY}"`; 
-        if (!mapTitle) return;
-        if (isLoading) {
-            mapTitle.innerHTML = `<i>Loading...</i>`;
-            return;
-        }
-        const pluralText = count === 1 ? '<span class="fw-normal">study' : '<span class="fw-normal">studies';
-        const countText = `${count} ${pluralText} found`;
-        mapTitle.innerHTML = `${countText} ${queryText}`;
+    /* ---------- Gemini SVG logo (multi-colour star) ---------- */
+    function geminiSVG() {
+        return `<svg class="gemini-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M14 2C14 2 10.5 10.5 2 14C10.5 17.5 14 26 14 26C14 26 17.5 17.5 26 14C17.5 10.5 14 2 14 2Z"
+    fill="url(#gPaint)"/>
+  <defs>
+    <linearGradient id="gPaint" x1="2" y1="2" x2="26" y2="26" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4285F4"/>
+      <stop offset="50%" stop-color="#9B72CB"/>
+      <stop offset="100%" stop-color="#EA4335"/>
+    </linearGradient>
+  </defs>
+</svg>`;
     }
 
-    /**
-     * Dynamically loads the Google Maps API.
-     */
+    /* ---------- Spinning placeholder (shown while fetching) ---------- */
+    function spinnerHTML(nctId) {
+        if (!IS_LOGGED_IN) return '';
+        return `<span id="match-badge-${nctId}" class="gemini-checking" title="Checking eligibility with Gemini AI">` +
+               geminiSVG() +
+               `<span>Checking&hellip;</span></span>`;
+    }
+
+    /* ---------- Resolved badge (replaces spinner after fetch) ---------- */
+    function resolvedBadgeHTML(status, verdict, confidence, reason, summary) {
+        // Choose style
+        let cls, icon, label;
+        const v = (verdict || status || '').toUpperCase();
+        if (v === 'MATCH') {
+            cls = 'match'; icon = '✅'; label = 'Match';
+        } else if (v === 'PARTIAL_MATCH') {
+            cls = 'partial'; icon = '🔶'; label = 'Partial Match';
+        } else if (v === 'NO_MATCH') {
+            cls = 'no-match'; icon = '❌'; label = 'No Match';
+        } else {
+            cls = 'unknown'; icon = ''; label = 'Checking AI…';
+        }
+
+        const confText = (confidence !== undefined && confidence !== null)
+            ? ` <span style="opacity:0.7">${confidence}%</span>` : '';
+
+        // Build reason lines
+        let reasonLines = [];
+        if (summary) reasonLines.push(summary);
+        else if (reason) reasonLines.push(reason);
+        const reasonHTML = reasonLines.length
+            ? `<div class="match-reason-box">${reasonLines.map(l => `<div>${l}</div>`).join('')}</div>`
+            : '';
+
+        return `<span class="match-badge ${cls}" tabindex="0">
+                    ${geminiSVG()}
+                    ${icon} ${label}${confText}
+                    ${reasonHTML}
+                </span>`;
+    }
+
+    function updateResultCount(count, isLoading = false) {
+        const mapTitle = document.getElementById('map-view-title');
+        const queryText = `for</span> "${QUERY}"`;
+        if (!mapTitle) return;
+        if (isLoading) { mapTitle.innerHTML = `<i>Loading...</i>`; return; }
+        const pluralText = count === 1 ? '<span class="fw-normal">study' : '<span class="fw-normal">studies';
+        mapTitle.innerHTML = `${count} ${pluralText} found ${queryText}`;
+    }
+
     function loadMapsAPI() {
-        // ... (This function is unchanged) ...
         const script = document.createElement('script');
         script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&loading=async&callback=onMapsApiReady`;
-        script.async = true;
-        script.defer = true;
+        script.async = true; script.defer = true;
         script.onerror = () => console.error('Google Maps script failed to load.');
         document.head.appendChild(script);
     }
 
-    // --- (Map API Promise logic is unchanged) ---
     let resolveMapsApiReady;
-    const mapsApiReady = new Promise((resolve) => {
-        resolveMapsApiReady = resolve;
-    });
-    window.onMapsApiReady = function() {
-        resolveMapsApiReady();
-    };
+    const mapsApiReady = new Promise(resolve => { resolveMapsApiReady = resolve; });
+    window.onMapsApiReady = function() { resolveMapsApiReady(); };
 
-    /**
-     * Calculates distance in KM using the Haversine formula.
-     */
     function haversine(lat1, lon1, lat2, lon2) {
-        // ... (This function is unchanged) ...
-        const R = 6371; 
-        const phi1 = lat1 * Math.PI / 180;
-        const phi2 = lat2 * Math.PI / 180;
-        const dPhi = (lat2 - lat1) * Math.PI / 180;
-        const dLambda = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(dPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
+        const R = 6371;
+        const phi1 = lat1 * Math.PI / 180, phi2 = lat2 * Math.PI / 180;
+        const dPhi = (lat2 - lat1) * Math.PI / 180, dLambda = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dPhi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dLambda/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
-    /**
-     * Gets precise browser location (Promise wrapper).
-     */
     function getBrowserLocation() {
-        // ... (This function is unchanged) ...
         return new Promise((resolve, reject) => {
-            if (!navigator.geolocation) {
-                reject(new Error("Geolocation not supported."));
-            }
+            if (!navigator.geolocation) reject(new Error("Geolocation not supported."));
             navigator.geolocation.getCurrentPosition(
-                (position) => resolve({ lat: position.coords.latitude, lon: position.coords.longitude }),
-                (error) => reject(error) 
+                pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+                err => reject(err)
             );
         });
     }
 
-    // --- NEW: Reusable function to generate the badge HTML ---
-    /**
-     * Returns the HTML string for a match badge based on status.
-     */
-    function getMatchBadgeHTML(status, reason) {
-        let badgeClass = '';
-        let badgeText = '';
-        let title = reason || ''; // Use the reason for the tooltip
-
-        if (status === 'MATCH') {
-            badgeClass = 'badge bg-success bg-gradient rounded-pill mb-2 me-2';
-            badgeText = '<i class="bi bi-check-circle-fill"></i> Match';
-        } else if (status === 'NO_MATCH') {
-            badgeClass = 'badge bg-danger bg-gradient rounded-pill mb-2 me-2';
-            badgeText = '<i class="bi bi-x-circle-fill"></i> No Match';
-        } else {
-            return ''; // Return an empty string for NO_DATA or other cases
-        }
-        
-        return `<div class="${badgeClass} d-inline-block" title="${title}">${badgeText}</div>`;
-    }
-
-    // --- MODIFIED: This function just injects HTML now ---
-    /**
-     * Injects a match badge into the correct card's placeholder DIV.
-     */
-    function injectMatchBadge(nctId, status, reason) {
-        const placeholder = document.getElementById(`match-badge-${nctId}`);
-        if (!placeholder) return; 
-        placeholder.innerHTML = getMatchBadgeHTML(status, reason);
-    }
-
-    // --- NEW: Sorting helper function ---
-    /**
-     * Returns a numeric priority score for sorting the list.
-     * Lower numbers sort first.
-     */
     function getSortGroup(study) {
-        const isPromoted = study.is_promoted;
-        const matchStatus = study.match_status; // This may be undefined, 'MATCH', 'NO_MATCH', or 'NO_DATA'
-
-        if (isPromoted) {
-            if (matchStatus === 'MATCH') return 1;    // 1. Promoted + Match
-            if (matchStatus === 'NO_MATCH') return 2; // 2. Promoted + No Match
-            return 3;                                 // 3. Promoted + Unknown
+        const p = study.is_promoted;
+        const m = study.match_status;
+        if (p) {
+            if (m === 'MATCH' || m === 'PARTIAL_MATCH') return 1;
+            if (m === 'NO_MATCH') return 2;
+            return 3;
         } else {
-            if (matchStatus === 'MATCH') return 4;    // 4. Regular + Match
-            if (matchStatus === 'NO_MATCH') return 5; // 5. Regular + No Match
-            return 6;                                 // 6. Regular + Unknown
+            if (m === 'MATCH' || m === 'PARTIAL_MATCH') return 4;
+            if (m === 'NO_MATCH') return 5;
+            return 6;
         }
     }
 
-    // --- MODIFIED: This function is now the main controller for sorting & rendering ---
-    /**
-     * Sequentially fetches eligibility status, updates the data array,
-     * injects badges, and then triggers a full re-sort and re-render.
-     */
-    async function fetchAllMatchStatuses(studies) {
-        if (!IS_LOGGED_IN) {
-            console.log("User not logged in. Skipping eligibility check.");
-            return; // Don't run any of this if the user isn't logged in
-        }
+    /* ---------- Live badge injection during sequential fetch ---------- */
+    function injectResolvedBadge(nctId, data) {
+        const el = document.getElementById(`match-badge-${nctId}`);
+        if (!el) return;
+        el.outerHTML = resolvedBadgeHTML(
+            data.status, data.verdict, data.confidence,
+            data.reason, data.plain_english_summary
+        );
+    }
 
-        // Loop through studies one-by-one to add data and show live badge updates
+    async function fetchAllMatchStatuses(studies) {
+        if (!IS_LOGGED_IN) return;
         for (const study of studies) {
             try {
-                const response = await fetch(`/api/check_match/${study.nctId}`);
-                if (!response.ok) {
-                    study.match_status = 'NO_DATA'; // Set status on the data object
-                } else {
-                    const data = await response.json();
-                    study.match_status = data.status; // Add the new status directly to the study object
-                    // Inject the badge live so the user sees progress
-                    injectMatchBadge(study.nctId, data.status, data.reason);
-                }
-            } catch (error) {
-                console.error(`Error checking match for ${study.nctId}:`, error);
+                const res = await fetch(`/api/check_match/${study.nctId}`);
+                const data = res.ok ? await res.json() : { status: 'NO_DATA' };
+                study.match_status  = data.verdict || data.status;
+                study.match_reason  = data.plain_english_summary || data.reason || '';
+                study.match_conf    = data.confidence;
+                injectResolvedBadge(study.nctId, data);
+            } catch (e) {
+                console.error(`Match check failed for ${study.nctId}:`, e);
                 study.match_status = 'NO_DATA';
             }
         }
-
-        // --- ALL FETCHES ARE DONE! NOW WE RE-SORT AND RE-RENDER ---
-        
-        // 1. Sort the main 'studies' array in memory using our new 3-key sort
+        // Re-sort once all checks done
         studies.sort((a, b) => {
-            const groupA = getSortGroup(a);
-            const groupB = getSortGroup(b);
-
-            if (groupA < groupB) return -1; // Sort by group first
-            if (groupA > groupB) return 1;
-
-            // If groups are identical (e.g., both are Promoted + Match), THEN sort by distance
-            return (a.closest_distance_km || Infinity) - (b.closest_distance_km || Infinity);
+            const diff = getSortGroup(a) - getSortGroup(b);
+            return diff !== 0 ? diff : (a.closest_distance_km||Infinity) - (b.closest_distance_km||Infinity);
         });
-
-        // 2. Re-build the entire list HTML with the newly sorted array
-        // Because the 'study.match_status' key now exists, buildResultsList
-        // will build the badges directly instead of using placeholders.
-        console.log("Re-sorting list by Match status...");
         buildResultsList(studies);
     }
 
-
-    /**
-     * MODIFIED: Dynamically builds the HTML for the results list.
-     * This function now checks if match_status exists. If it does, it builds
-     * the badge. If not, it builds the empty placeholder.
-     */
     function buildResultsList(studies) {
         const container = document.getElementById('results-list-container');
         if (!studies || studies.length === 0) {
@@ -253,286 +287,186 @@
         }
         let html = '';
         studies.forEach(study => {
-            // --- Badge and Border Logic ---
             let cardClasses = 'card h-100 shadow border-0';
             let promotedBadgeHTML = '';
-            let statusBadgeHTML = '';
-            let matchBadgeHTML = ''; // Start with an empty match badge
+            let statusBadgeHTML  = '';
+            let matchBadgeHTML   = '';
 
-            // 1. Check Promotion
             if (study.is_promoted) {
-                cardClasses = 'card h-100 shadow border border-primary'; 
+                cardClasses = 'card h-100 shadow border border-primary';
                 promotedBadgeHTML = `<div class="badge bg-primary bg-gradient rounded-pill mb-2 me-2"><i class="bi bi-star-fill"></i> Promoted</div>`;
             }
-            
-            // 2. Check Status
             if (study.status === 'NOT_YET_RECRUITING') {
-                const statusText = study.status.replace(/_/g, ' ');
-                statusBadgeHTML = `<div class="badge border border-primary text-primary rounded-pill mb-2 d-inline-block">${statusText}</div>`;
+                statusBadgeHTML = `<div class="badge border border-primary text-primary rounded-pill mb-2 d-inline-block">${study.status.replace(/_/g,' ')}</div>`;
             }
 
-            // 3. Check Match Status (NEW)
-            if (study.match_status) {
-                // If the status exists on the object (from an async fetch), build the badge.
-                matchBadgeHTML = getMatchBadgeHTML(study.match_status, study.match_reason);
+            if (study.match_status && study.match_status !== 'NO_DATA') {
+                // Already resolved — render final badge directly
+                matchBadgeHTML = resolvedBadgeHTML(
+                    study.match_status, study.match_status,
+                    study.match_conf, study.match_reason, null
+                );
             } else if (IS_LOGGED_IN) {
-                // If status is not yet known (first load), add the placeholder.
-                matchBadgeHTML = `<div id="match-badge-${study.nctId}" class="d-inline-block"></div>`;
+                // Not yet checked — show spinning Gemini placeholder
+                matchBadgeHTML = spinnerHTML(study.nctId);
             }
-            // --- End Logic ---
 
             const distanceHTML = study.closest_distance_km !== undefined
-                ? `<div class="text-end ps-3" style="min-width: 120px;"><span class="h4 d-block mb-0">${Math.round(study.closest_distance_km)}</span><span class="text-muted small">km</span></div>`
-                : '';
-            
-            html += `
-                <div class="col-12 mb-4">
-                    <div class="${cardClasses}"> <div class="card-body p-4 d-flex justify-content-between align-items-start">
-                            <div class="flex-grow-1">
-                                
-                                ${matchBadgeHTML}     ${promotedBadgeHTML} 
-                                ${statusBadgeHTML}  
+                ? `<div class="text-end ps-3" style="min-width:120px">
+                       <span class="h4 d-block mb-0">${Math.round(study.closest_distance_km)}</span>
+                       <span class="text-muted small">km</span>
+                   </div>` : '';
 
-                                <a class="text-decoration-none link-dark stretched-link" href="https://clinicaltrials.gov/study/${study.nctId}" target="_blank">
-                                    <h5 class="card-title mb-3">${study.title}</h5>
-                                </a>
-                                <p class="card-text mb-0"><strong>Conditions:</strong> ${study.conditions}</p>
-                                <p class="card-text"><strong>NCT ID:</strong> ${study.nctId}</p>
-                            </div>
-                            ${distanceHTML}
-                        </div>
-                    </div>
-                </div>`;
+            html += `
+            <div class="col-12 mb-4">
+              <div class="${cardClasses}">
+                <div class="card-body p-4 d-flex justify-content-between align-items-start">
+                  <div class="flex-grow-1">
+                    ${matchBadgeHTML}${promotedBadgeHTML}${statusBadgeHTML}
+                    <a class="text-decoration-none link-dark stretched-link"
+                       href="https://clinicaltrials.gov/study/${study.nctId}" target="_blank">
+                      <h5 class="card-title mb-3">${study.title}</h5>
+                    </a>
+                    <p class="card-text mb-0"><strong>Conditions:</strong> ${study.conditions}</p>
+                    <p class="card-text"><strong>NCT ID:</strong> ${study.nctId}</p>
+                  </div>
+                  ${distanceHTML}
+                </div>
+              </div>
+            </div>`;
         });
         container.innerHTML = html;
     }
 
-    /**
-     * Clears all trial markers from the map.
-     */
     function clearMarkers() {
-        // ... (This function is unchanged) ...
-        markerList.forEach(marker => marker.setMap(null));
+        markerList.forEach(m => m.setMap(null));
         markerList.length = 0;
     }
 
-    /**
-     * Plots new data (markers & clusters) onto the existing map.
-     */
     function plotDataOnMap(studies, centerLat, centerLon) {
-        // ... (This function is unchanged) ...
-        clearMarkers(); 
+        clearMarkers();
         const bounds = new google.maps.LatLngBounds();
-        bounds.extend({ lat: centerLat, lng: centerLon }); 
-        const searchRadiusKM = 200; 
-        const locationsMap = {}; 
+        bounds.extend({ lat: centerLat, lng: centerLon });
+        const searchRadiusKM = 200;
+        const locationsMap = {};
         studies.forEach(study => {
             study.locations.forEach(location => {
                 if (location.geoPoint) {
                     const lat = parseFloat(location.geoPoint.lat);
                     const lon = parseFloat(location.geoPoint.lon);
-                    if (!isNaN(lat) && !isNaN(lon)) {
-                        const dist = haversine(centerLat, centerLon, lat, lon);
-                        if (dist <= searchRadiusKM) { 
-                            const key = `${lat},${lon}`; 
-                            if (!locationsMap[key]) { 
-                                locationsMap[key] = { position: { lat: lat, lng: lon }, facility: location.facility || 'N/A', studies: [] };
-                            }
-                            locationsMap[key].studies.push({
-                                title: study.title,
-                                nctId: study.nctId,
-                                status: study.status.replace(/_/g, ' ')
-                            });
+                    if (!isNaN(lat) && !isNaN(lon) && haversine(centerLat, centerLon, lat, lon) <= searchRadiusKM) {
+                        const key = `${lat},${lon}`;
+                        if (!locationsMap[key]) {
+                            locationsMap[key] = { position: { lat, lng: lon }, facility: location.facility || 'N/A', studies: [] };
                         }
+                        locationsMap[key].studies.push({ title: study.title, nctId: study.nctId, status: study.status.replace(/_/g,' ') });
                     }
                 }
             });
         });
         Object.values(locationsMap).forEach(locGroup => {
-            locGroup.studies.sort((a, b) => a.title.localeCompare(b.title));
-            let markerIcon = { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: "#42a5f5", fillOpacity: 1, strokeColor: "white", strokeWeight: 1.5 }; 
-            if (locGroup.studies.length > 1) {
-                markerIcon.scale = 10;
-                markerIcon.fillColor = "#0D47A1"; 
-            }
-            const marker = new google.maps.Marker({ position: locGroup.position, map: map, icon: markerIcon });
-            markerList.push(marker); 
+            locGroup.studies.sort((a,b) => a.title.localeCompare(b.title));
+            let markerIcon = { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: "#42a5f5", fillOpacity: 1, strokeColor: "white", strokeWeight: 1.5 };
+            if (locGroup.studies.length > 1) { markerIcon.scale = 10; markerIcon.fillColor = "#0D47A1"; }
+            const marker = new google.maps.Marker({ position: locGroup.position, map, icon: markerIcon });
+            markerList.push(marker);
             if (locGroup.studies.length > 1) {
                 marker.setLabel({ text: locGroup.studies.length.toString(), color: "white", fontWeight: "bold", fontSize: "11px" });
             }
             marker.addListener('click', () => {
-                let contentString = `<div style="min-width: 320px; max-height: 240px; overflow-y: auto; padding: 0; color: #212529; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">`;
-                contentString += `<div style="padding: 1rem; background-color: #f7f7f7; border-bottom: 1px solid #dee2e6;"><h6 style="font-weight: 700; margin: 0; font-size: 1.1rem;">${locGroup.facility}</h6><span style="font-size: 0.9rem; color: #6c757d;">${locGroup.studies.length} trial(s) at this location</span></div>`;
-                contentString += `<div style="padding: 1rem;">`;
-                locGroup.studies.forEach((study, index) => {
-                    let badgeStyle = '';
-                    if (study.status === 'NOT YET RECRUITING') {
-                        badgeStyle = `display: inline-block; padding: .35em .65em; font-size: .75em; font-weight: 700; line-height: 1; text-align: center; white-space: nowrap; vertical-align: baseline; border-radius: .375rem; border: 1px solid #0d6efd; color: #0d6efd;`;
-                    } else {
-                        badgeStyle = `display: inline-block; padding: .35em .65em; font-size: .75em; font-weight: 700; line-height: 1; text-align: center; white-space: nowrap; vertical-align: baseline; border-radius: .375rem; color: #fff; background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0)); background-color: #0d6efd;`;
-                    }
-                    const borderStyle = (index === locGroup.studies.length - 1) ? '' : 'border-bottom: 1px solid #eee;';
-                    contentString += `<div style="margin-bottom: 1rem; padding-bottom: 1rem; ${borderStyle}"><div style="margin-bottom: 0.25rem;"><span style="${badgeStyle}">${study.status.toUpperCase()}</span></div><a href="https://clinicaltrials.gov/study/${study.nctId}" target="_blank" style="font-size: 1rem; font-weight: 600; color: #212529; text-decoration: none; line-height: 1.4;">${study.title}</a><br><span style="font-size: 0.85rem; color: #6c757d;">NCT ID: ${study.nctId}</span></div>`;
+                let c = `<div style="min-width:320px;max-height:240px;overflow-y:auto;padding:0;color:#212529;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">`;
+                c += `<div style="padding:1rem;background:#f7f7f7;border-bottom:1px solid #dee2e6;"><h6 style="font-weight:700;margin:0;font-size:1.1rem;">${locGroup.facility}</h6><span style="font-size:.9rem;color:#6c757d;">${locGroup.studies.length} trial(s) at this location</span></div><div style="padding:1rem;">`;
+                locGroup.studies.forEach((study, i) => {
+                    const border = i < locGroup.studies.length-1 ? 'border-bottom:1px solid #eee;' : '';
+                    c += `<div style="margin-bottom:1rem;padding-bottom:1rem;${border}"><a href="https://clinicaltrials.gov/study/${study.nctId}" target="_blank" style="font-size:1rem;font-weight:600;color:#212529;text-decoration:none;">${study.title}</a><br><span style="font-size:.85rem;color:#6c757d;">NCT ID: ${study.nctId}</span></div>`;
                 });
-                contentString += `</div></div>`; 
-                infoWindow.setContent(contentString);
+                c += `</div></div>`;
+                infoWindow.setContent(c);
                 infoWindow.open(map, marker);
             });
             bounds.extend(locGroup.position);
         });
         if (isInitialLoad) {
-            if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
-                 map.setCenter(bounds.getCenter());
-                 map.setZoom(11);
-            } else {
-                 map.fitBounds(bounds);
-            }
+            bounds.getNorthEast().equals(bounds.getSouthWest()) ? (map.setCenter(bounds.getCenter()), map.setZoom(11)) : map.fitBounds(bounds);
         }
     }
 
-    /**
-     * Creates the map shell (runs once).
-     */
     function initMapShell(centerLat, centerLon, defaultZoom) {
-        // ... (This function is unchanged) ...
-        const mapElement = document.getElementById('map');
-        const mapStyle = [ { "elementType": "geometry", "stylers": [{ "color": "#212121" }] }, { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] }, { "elementType": "labels.text.fill", "stylers": [{ "color": "#757575" }] }, { "elementType": "labels.text.stroke", "stylers": [{ "color": "#212121" }] }, { "featureType": "administrative", "elementType": "geometry", "stylers": [{ "color": "#757575" }] }, { "featureType": "administrative.country", "elementType": "labels.text.fill", "stylers": [{ "color": "#9e9e9e" }] }, { "featureType": "administrative.land_parcel", "stylers": [{ "visibility": "off" }] }, { "featureType": "administrative.locality", "elementType": "labels.text.fill", "stylers": [{ "color": "#bdbdbd" }] }, { "featureType": "poi", "stylers": [{ "visibility": "off" }] }, { "featureType": "road", "elementType": "geometry.fill", "stylers": [{ "color": "#2c2c2c" }] }, { "featureType": "road", "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] }, { "featureType": "road.arterial", "elementType": "geometry", "stylers": [{ "color": "#373737" }] }, { "featureType": "road.highway", "elementType": "geometry", "stylers": [{ "color": "#3c3c3c" }] }, { "featureType": "road.highway.controlled_access", "elementType": "geometry", "stylers": [{ "color": "#4e4e4e" }] }, { "featureType": "road.local", "elementType": "labels.text.fill", "stylers": [{ "color": "#616161" }] }, { "featureType": "transit", "stylers": [{ "visibility": "off" }] }, { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#000000" }] }, { "featureType": "water", "elementType": "labels.text.fill", "stylers": [{ "color": "#3d3d3d" }] } ];
-        map = new google.maps.Map(mapElement, {
-            center: { lat: centerLat, lng: centerLon },
-            zoom: defaultZoom,
-            styles: mapStyle,
-            gestureHandling: "cooperative",
-            zoomControl: true,
-            mapTypeControl: false,
-            scaleControl: false,
-            streetViewControl: false,
-            rotateControl: false,
+        const mapStyle = [{"elementType":"geometry","stylers":[{"color":"#212121"}]},{"elementType":"labels.icon","stylers":[{"visibility":"off"}]},{"elementType":"labels.text.fill","stylers":[{"color":"#757575"}]},{"elementType":"labels.text.stroke","stylers":[{"color":"#212121"}]},{"featureType":"administrative","elementType":"geometry","stylers":[{"color":"#757575"}]},{"featureType":"administrative.country","elementType":"labels.text.fill","stylers":[{"color":"#9e9e9e"}]},{"featureType":"administrative.land_parcel","stylers":[{"visibility":"off"}]},{"featureType":"administrative.locality","elementType":"labels.text.fill","stylers":[{"color":"#bdbdbd"}]},{"featureType":"poi","stylers":[{"visibility":"off"}]},{"featureType":"road","elementType":"geometry.fill","stylers":[{"color":"#2c2c2c"}]},{"featureType":"road","elementType":"labels.icon","stylers":[{"visibility":"off"}]},{"featureType":"road.arterial","elementType":"geometry","stylers":[{"color":"#373737"}]},{"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#3c3c3c"}]},{"featureType":"road.highway.controlled_access","elementType":"geometry","stylers":[{"color":"#4e4e4e"}]},{"featureType":"road.local","elementType":"labels.text.fill","stylers":[{"color":"#616161"}]},{"featureType":"transit","stylers":[{"visibility":"off"}]},{"featureType":"water","elementType":"geometry","stylers":[{"color":"#000000"}]},{"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#3d3d3d"}]}];
+        map = new google.maps.Map(document.getElementById('map'), {
+            center: { lat: centerLat, lng: centerLon }, zoom: defaultZoom, styles: mapStyle,
+            gestureHandling: "cooperative", zoomControl: true, mapTypeControl: false,
+            scaleControl: false, streetViewControl: false, rotateControl: false,
             fullscreenControl: false,
             zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM }
         });
         infoWindow = new google.maps.InfoWindow();
         new google.maps.Marker({
-            position: { lat: centerLat, lng: centerLon },
-            map: map,
+            position: { lat: centerLat, lng: centerLon }, map,
             title: "Your Location",
-            icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: "white", fillOpacity: 1, strokeColor: "#4285F4", strokeWeight: 2 },
+            icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: "white", fillOpacity: 1, strokeColor: "#4285F4", strokeWeight: 2 }
         });
         const searchAreaButton = document.createElement("button");
         searchAreaButton.textContent = "Search This Area";
-        searchAreaButton.style.backgroundColor = "#fff";
-        searchAreaButton.style.color = "#333";
-        searchAreaButton.style.border = "none";
-        searchAreaButton.style.borderRadius = "4px";
-        searchAreaButton.style.padding = "8px 12px";
-        searchAreaButton.style.fontSize = "14px";
-        searchAreaButton.style.fontWeight = "bold";
-        searchAreaButton.style.boxShadow = "0 2px 6px rgba(0,0,0,.3)";
-        searchAreaButton.style.cursor = "pointer";
-        searchAreaButton.style.minWidth = "145px";
-        searchAreaButton.style.textAlign = "center";
-        searchAreaButton.style.marginTop = "10px"; 
-        searchAreaButton.style.display = "none";
+        Object.assign(searchAreaButton.style, { backgroundColor:"#fff", color:"#333", border:"none", borderRadius:"4px", padding:"8px 12px", fontSize:"14px", fontWeight:"bold", boxShadow:"0 2px 6px rgba(0,0,0,.3)", cursor:"pointer", minWidth:"145px", textAlign:"center", marginTop:"10px", display:"none" });
         map.controls[google.maps.ControlPosition.TOP_CENTER].push(searchAreaButton);
-        map.addListener('idle', function() {
-            if (isInitialLoad === true) {
-                isInitialLoad = false;
-            } else {
-                searchAreaButton.style.display = "block";
-                searchAreaButton.disabled = false;
-                searchAreaButton.textContent = "Search This Area";
-            }
+        map.addListener('idle', () => {
+            if (isInitialLoad) { isInitialLoad = false; }
+            else { searchAreaButton.style.display = "block"; searchAreaButton.disabled = false; searchAreaButton.textContent = "Search This Area"; }
         });
-        map.addListener('dragstart', function() {
-             searchAreaButton.style.display = "none";
-        });
-        searchAreaButton.addEventListener('click', async function() {
-            searchAreaButton.disabled = true; 
-            searchAreaButton.textContent = "Searching...";
-            const newCenter = map.getCenter();
-            await fetchAndRenderTrials(QUERY, newCenter.lat(), newCenter.lng(), 200);
+        map.addListener('dragstart', () => { searchAreaButton.style.display = "none"; });
+        searchAreaButton.addEventListener('click', async () => {
+            searchAreaButton.disabled = true; searchAreaButton.textContent = "Searching...";
+            const c = map.getCenter();
+            await fetchAndRenderTrials(QUERY, c.lat(), c.lng(), 200);
             searchAreaButton.style.display = "none";
         });
     }
-    
-    /**
-     * MODIFIED: Reusable function to fetch and render all trial data.
-     */
+
     async function fetchAndRenderTrials(query, lat, lon, radius) {
         const container = document.getElementById('results-list-container');
         try {
             container.innerHTML = `<div class="col-12 text-center"><p><i>Searching for trials...</i></p><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>`;
             updateResultCount(0, true);
-
-            const response = await fetch(`/api/search?query=${encodeURIComponent(query)}&lat=${lat}&lon=${lon}&radius=${radius}`);
-            if (!response.ok) {
-                throw new Error(`API request failed`);
-            }
-            // studies is our master array, pass it everywhere.
-            const studies = await response.json(); 
-
+            const res = await fetch(`/api/search?query=${encodeURIComponent(query)}&lat=${lat}&lon=${lon}&radius=${radius}`);
+            if (!res.ok) throw new Error('API request failed');
+            const studies = await res.json();
             updateResultCount(studies.length);
-            plotDataOnMap(studies, lat, lon); 
-            buildResultsList(studies); // This builds the initial list with placeholders
-
-            // Kick off the async eligibility checks, which will re-sort and re-render when done
+            plotDataOnMap(studies, lat, lon);
+            buildResultsList(studies);
             await fetchAllMatchStatuses(studies);
-        
-        } catch (error) {
-            console.error("Failed to fetch search results:", error);
+        } catch (e) {
+            console.error("fetchAndRenderTrials error:", e);
             updateResultCount(0);
-            container.innerHTML = '<div class="col-12"><p class="text-center text-danger">An error occurred while fetching new results.</p></div>';
+            container.innerHTML = '<div class="col-12"><p class="text-center text-danger">An error occurred while fetching results.</p></div>';
         }
     }
 
-    // --- APPLICATION ENTRY POINT (MODIFIED) ---
-    
     document.addEventListener("DOMContentLoaded", function() {
-    
         (async function runSearch() {
-            const container = document.getElementById('results-list-container');
             let searchLat, searchLon;
-
             try {
-                const preciseLocation = await getBrowserLocation();
-                searchLat = preciseLocation.lat;
-                searchLon = preciseLocation.lon;
-            } catch (geoError) {
-                searchLat = FALLBACK_LAT;
-                searchLon = FALLBACK_LON;
-            }
-            
+                const loc = await getBrowserLocation();
+                searchLat = loc.lat; searchLon = loc.lon;
+            } catch { searchLat = FALLBACK_LAT; searchLon = FALLBACK_LON; }
             try {
-                loadMapsAPI(); 
-                
+                loadMapsAPI();
                 const dataPromise = fetch(`/api/search?query=${encodeURIComponent(QUERY)}&lat=${searchLat}&lon=${searchLon}&radius=200`);
-
-                const [_, dataResponse] = await Promise.all([
-                    mapsApiReady,   
-                    dataPromise     
-                ]);
-
-                if (!dataResponse.ok) {
-                    throw new Error(`API request failed`);
-                }
-                // studies is our master array, pass it to all functions
+                const [, dataResponse] = await Promise.all([mapsApiReady, dataPromise]);
+                if (!dataResponse.ok) throw new Error('API request failed');
                 const studies = await dataResponse.json();
-
-                initMapShell(searchLat, searchLon, 9);         
-                plotDataOnMap(studies, searchLat, searchLon); 
-                buildResultsList(studies); // This builds the initial list with placeholders
+                initMapShell(searchLat, searchLon, 9);
+                plotDataOnMap(studies, searchLat, searchLon);
+                buildResultsList(studies);
                 updateResultCount(studies.length);
-
-                // Kick off the async eligibility checks, which will re-sort and re-render when done
                 await fetchAllMatchStatuses(studies);
-                
-            } catch (error) {
-                console.error("Failed to load map or initial data:", error);
-                container.innerHTML = '<div class="col-12"><p class="text-center text-danger">A critical error occurred loading map data.</p></div>';
+            } catch (e) {
+                console.error("runSearch error:", e);
+                document.getElementById('results-list-container').innerHTML =
+                    '<div class="col-12"><p class="text-center text-danger">A critical error occurred loading map data.</p></div>';
             }
         })();
-
     });
-
 </script>
 {% endif %}
 {% endblock %}

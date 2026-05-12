@@ -7,102 +7,77 @@ import secrets, requests, warnings
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'trialconnect', 'data', 'trial_connect.db')
 
-# --- Constant for allowed file types ---
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
 def get_db():
-    """Opens a new database connection if there is none yet for the current application context."""
     if 'db' not in g:
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
     return g.db
 
 def close_db(e=None):
-    """Closes the database again at the end of the request."""
     db = g.pop('db', None)
     if db is not None:
         db.close()
 
 def init_db():
-    """Initializes the database and creates tables if they don't exist."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    
     db = sqlite3.connect(DB_PATH)
     cursor = db.cursor()
-
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS contacts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            firstName TEXT NOT NULL,
-            lastName TEXT NOT NULL,
-            email TEXT NOT NULL,
-            message TEXT NOT NULL
+            firstName TEXT NOT NULL, lastName TEXT NOT NULL,
+            email TEXT NOT NULL, message TEXT NOT NULL
         )
     """)
-
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL UNIQUE,
-            firstName TEXT NOT NULL,
-            lastName TEXT NOT NULL,
-            birthYear INTEGER,
-            sex TEXT,
-            password_hash TEXT,
-            auth_provider TEXT NOT NULL,
-            provider_id TEXT,
-            profile_picture_url TEXT,
-            remember_token TEXT,
+            email TEXT NOT NULL UNIQUE, firstName TEXT NOT NULL, lastName TEXT NOT NULL,
+            birthYear INTEGER, sex TEXT, password_hash TEXT, auth_provider TEXT NOT NULL,
+            provider_id TEXT, profile_picture_url TEXT, remember_token TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            reset_token TEXT,
-            reset_token_expiration TIMESTAMP
+            reset_token TEXT, reset_token_expiration TIMESTAMP
         )
     """)
-
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS promoted_studies (
             nct_id TEXT PRIMARY KEY NOT NULL,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS promotion_analytics (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nct_id TEXT NOT NULL,
-            search_term TEXT NOT NULL,
+            nct_id TEXT NOT NULL, search_term TEXT NOT NULL,
             view_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-
     db.commit()
     db.close()
     print("Database initialized successfully.")
 
 def add_contact_message(firstName, lastName, email, message):
     db = get_db()
-    db.execute(
-        "INSERT INTO contacts (firstName, lastName, email, message) VALUES (?, ?, ?, ?)",
-        (firstName, lastName, email, message)
-    )
+    db.execute("INSERT INTO contacts (firstName, lastName, email, message) VALUES (?, ?, ?, ?)",
+               (firstName, lastName, email, message))
     db.commit()
 
-def get_or_create_user(email, firstName, lastName, birthYear=None, sex=None, auth_provider='local', profile_picture_url=None, provider_id=None, password=None):
+def get_or_create_user(email, firstName, lastName, birthYear=None, sex=None,
+                       auth_provider='local', profile_picture_url=None, provider_id=None, password=None):
     db = get_db()
     user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     if user:
         return dict(user)
-    password_hash = None
-    if password:
-        password_hash = generate_password_hash(password)
+    password_hash = generate_password_hash(password) if password else None
     remember_token = secrets.token_hex(16)
     cursor = db.execute(
         "INSERT INTO users (email, firstName, lastName, birthYear, sex, password_hash, auth_provider, provider_id, profile_picture_url, remember_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (email, firstName, lastName, birthYear, sex, password_hash, auth_provider, provider_id, profile_picture_url, remember_token)
     )
     db.commit()
-    new_user = db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
-    return dict(new_user)
+    return dict(db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone())
 
 def get_user_by_email(email):
     db = get_db()
@@ -116,14 +91,10 @@ def get_user_by_remember_token(token):
 
 def validate_password_strength(password):
     errors = []
-    if len(password) < 8:
-        errors.append("Password must be at least 8 characters long.")
-    if not re.search(r"[A-Z]", password):
-        errors.append("Password must contain at least one uppercase letter.")
-    if not re.search(r"[a-z]", password):
-        errors.append("Password must contain at least one lowercase letter.")
-    if not re.search(r"[0-9]", password):
-        errors.append("Password must contain at least one number.")
+    if len(password) < 8: errors.append("Password must be at least 8 characters long.")
+    if not re.search(r"[A-Z]", password): errors.append("Password must contain at least one uppercase letter.")
+    if not re.search(r"[a-z]", password): errors.append("Password must contain at least one lowercase letter.")
+    if not re.search(r"[0-9]", password): errors.append("Password must contain at least one number.")
     return errors
 
 def allowed_file(filename):
@@ -164,19 +135,10 @@ def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
             status_module = protocol.get("statusModule", {})
             conditions_module = protocol.get("conditionsModule", {})
             locations_list = []
-            contacts_locations_module = protocol.get("contactsLocationsModule", {})
-            api_locations = contacts_locations_module.get("locations", [])
-            if api_locations:
-                for loc in api_locations:
-                    location_data = {
-                        "facility": loc.get("facility"),
-                        "city": loc.get("city"),
-                        "state": loc.get("state"),
-                        "zip": loc.get("zip"),
-                        "country": loc.get("country"),
-                        "geoPoint": loc.get("geoPoint")
-                    }
-                    locations_list.append({k: v for k, v in location_data.items() if v is not None})
+            api_locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
+            for loc in api_locations:
+                location_data = {k: loc.get(k) for k in ["facility","city","state","zip","country","geoPoint"]}
+                locations_list.append({k: v for k, v in location_data.items() if v is not None})
             formatted_trials.append({
                 "nctId": id_module.get("nctId"),
                 "title": id_module.get("briefTitle"),
@@ -191,8 +153,8 @@ def haversine(lat1, lon1, lat2, lon2):
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
 def get_location_from_ip(ip_address):
     if ip_address == '127.0.0.1':
@@ -209,13 +171,11 @@ def get_location_from_ip(ip_address):
 
 def get_all_promoted_studies():
     db = get_db()
-    studies = db.execute("SELECT * FROM promoted_studies ORDER BY added_at DESC").fetchall()
-    return [dict(study) for study in studies]
+    return [dict(s) for s in db.execute("SELECT * FROM promoted_studies ORDER BY added_at DESC").fetchall()]
 
 def get_all_promoted_studies_set():
     db = get_db()
-    studies_tuples = db.execute("SELECT nct_id FROM promoted_studies").fetchall()
-    return {item[0] for item in studies_tuples}
+    return {item[0] for item in db.execute("SELECT nct_id FROM promoted_studies").fetchall()}
 
 def add_promoted_study(nct_id):
     db = get_db()
@@ -249,8 +209,7 @@ def check_user_study_match(user_profile, nct_id):
         warnings.filterwarnings('ignore', message='Unverified HTTPS request')
         response = requests.get(url, timeout=5, verify=False)
         response.raise_for_status()
-        data = response.json()
-        eligibility = data.get("protocolSection", {}).get("eligibilityModule", {})
+        eligibility = response.json().get("protocolSection", {}).get("eligibilityModule", {})
     except requests.exceptions.RequestException as e:
         print(f"Failed to fetch eligibility for {nct_id}: {e}")
         return {'status': 'NO_DATA', 'reason': 'API fetch failed.'}
@@ -258,24 +217,20 @@ def check_user_study_match(user_profile, nct_id):
         return {'status': 'NO_DATA', 'reason': 'No eligibility data available.'}
     study_sex = eligibility.get('sex', 'ALL').upper()
     is_sex_match = study_sex == 'ALL' or study_sex == user_sex
-    min_age_str = eligibility.get('minimumAge', '0 Years')
-    max_age_str = eligibility.get('maximumAge')
-    min_age_match = re.search(r'\d+', min_age_str)
-    min_age = int(min_age_match.group(0)) if min_age_match else 0
+    min_age = int((re.search(r'\d+', eligibility.get('minimumAge','0 Years')) or type('',(),{'group':lambda s,x:'0'})()).group(0))
     max_age = 150
+    max_age_str = eligibility.get('maximumAge')
     if max_age_str:
-        max_age_match = re.search(r'\d+', max_age_str)
-        if max_age_match:
-            max_age = int(max_age_match.group(0))
+        m = re.search(r'\d+', max_age_str)
+        if m: max_age = int(m.group(0))
     is_age_match = min_age <= user_age <= max_age
     if is_age_match and is_sex_match:
-        return {'status': 'MATCH', 'reason': f'User (Age: {user_age}, Sex: {user_sex}) matches study (Age: {min_age}-{max_age}, Sex: {study_sex})'}
-    reason = "User did not match: "
-    if not is_age_match:
-        reason += f"Age ({user_age}) outside range ({min_age}-{max_age}). "
-    if not is_sex_match:
-        reason += f"Sex ({user_sex}) does not match study requirement ({study_sex})."
-    return {'status': 'NO_MATCH', 'reason': reason}
+        return {'status': 'MATCH', 'verdict': 'MATCH',
+                'reason': f'Age ({user_age}) and sex ({user_sex}) match study criteria.'}
+    reason = ""
+    if not is_age_match: reason += f"Age ({user_age}) outside range ({min_age}-{max_age}). "
+    if not is_sex_match: reason += f"Sex ({user_sex}) does not match study requirement ({study_sex})."
+    return {'status': 'NO_MATCH', 'verdict': 'NO_MATCH', 'reason': reason.strip()}
 
 
 # =============================================================================
@@ -295,6 +250,34 @@ def get_mongo_db():
     return g.mongo_db
 
 
+def get_text_embedding(text):
+    """
+    Generates a text embedding using the new google-genai SDK.
+    Falls back gracefully if GOOGLE_CLOUD_PROJECT is not set.
+    Uses 'text-embedding-005' which is GA on Vertex AI.
+    """
+    project = os.environ.get('GOOGLE_CLOUD_PROJECT')
+    if not project:
+        return None
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(
+            vertexai=True,
+            project=project,
+            location='global'
+        )
+        result = client.models.embed_content(
+            model='text-embedding-005',
+            contents=text,
+            config=types.EmbedContentConfig(task_type='RETRIEVAL_QUERY')
+        )
+        return result.embeddings[0].values
+    except Exception as e:
+        print(f"Embedding generation failed: {e}")
+        return None
+
+
 def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
     mongo_uri = os.environ.get('MONGODB_URI')
     if not mongo_uri:
@@ -306,59 +289,30 @@ def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
         query_embedding = get_text_embedding(query)
         if query_embedding:
             pipeline = [
-                {
-                    "$vectorSearch": {
-                        "index": "eligibility_vector_index",
-                        "path": "eligibility_criteria_embedding",
-                        "queryVector": query_embedding,
-                        "numCandidates": 200,
-                        "limit": 100
-                    }
-                },
+                {"$vectorSearch": {
+                    "index": "eligibility_vector_index",
+                    "path": "eligibility_criteria_embedding",
+                    "queryVector": query_embedding,
+                    "numCandidates": 200, "limit": 100
+                }},
                 {"$addFields": {"vector_score": {"$meta": "vectorSearchScore"}}},
-                {"$match": {"overall_status": {"$in": ["RECRUITING", "NOT_YET_RECRUITING", "AVAILABLE"]}}},
-                {
-                    "$project": {
-                        "_id": 0,
-                        "nctId": "$nct_id",
-                        "title": "$brief_title",
-                        "status": "$overall_status",
-                        "conditions": "$conditions_str",
-                        "locations": "$locations",
-                        "eligibility_criteria": 1,
-                        "vector_score": 1
-                    }
-                }
+                {"$match": {"overall_status": {"$in": ["RECRUITING","NOT_YET_RECRUITING","AVAILABLE"]}}},
+                {"$project": {
+                    "_id": 0, "nctId": "$nct_id", "title": "$brief_title",
+                    "status": "$overall_status", "conditions": "$conditions_str",
+                    "locations": "$locations", "eligibility_criteria": 1, "vector_score": 1
+                }}
             ]
-            results = list(collection.aggregate(pipeline))
+            return list(collection.aggregate(pipeline))
         else:
-            results = list(collection.find(
-                {"$text": {"$search": query}, "overall_status": {"$in": ["RECRUITING", "NOT_YET_RECRUITING", "AVAILABLE"]}},
+            return list(collection.find(
+                {"$text": {"$search": query}, "overall_status": {"$in": ["RECRUITING","NOT_YET_RECRUITING","AVAILABLE"]}},
                 {"_id": 0, "nctId": "$nct_id", "title": "$brief_title", "status": "$overall_status",
                  "conditions": "$conditions_str", "locations": 1, "eligibility_criteria": 1}
             ).limit(100))
-        return results
     except Exception as e:
         print(f"MongoDB search failed: {e} — falling back to ClinicalTrials.gov API")
         return search_clinical_trials(query, user_lat, user_lon, radius_km)
-
-
-def get_text_embedding(text):
-    try:
-        import vertexai
-        from vertexai.language_models import TextEmbeddingModel
-        from flask import current_app
-        project = current_app.config.get('GOOGLE_CLOUD_PROJECT') or os.environ.get('GOOGLE_CLOUD_PROJECT')
-        location = current_app.config.get('VERTEX_AI_LOCATION', 'us-central1')
-        if not project:
-            return None
-        vertexai.init(project=project, location=location)
-        model = TextEmbeddingModel.from_pretrained("text-embedding-004")
-        embeddings = model.get_embeddings([text])
-        return embeddings[0].values
-    except Exception as e:
-        print(f"Embedding generation failed: {e}")
-        return None
 
 
 def score_trial(trial, patient_profile):
@@ -394,8 +348,7 @@ def fetch_trial_eligibility_text(nct_id):
         warnings.filterwarnings('ignore', message='Unverified HTTPS request')
         response = requests.get(url, timeout=10, verify=False)
         response.raise_for_status()
-        data = response.json()
-        eligibility = data.get("protocolSection", {}).get("eligibilityModule", {})
+        eligibility = response.json().get("protocolSection", {}).get("eligibilityModule", {})
         return eligibility.get("eligibilityCriteria")
     except Exception as e:
         print(f"CT.gov eligibility fetch failed for {nct_id}: {e}")
@@ -409,15 +362,13 @@ def gemini_eligibility_check(patient_profile, eligibility_criteria_text, nct_id)
         return {
             "verdict": "UNKNOWN", "confidence": 0, "match_reasons": [],
             "exclusion_flags": [], "missing_info": ["Gemini not configured"],
-            "plain_english_summary": "AI matching is not configured yet."
+            "plain_english_summary": "AI matching is not configured yet.",
+            "status": "UNKNOWN", "reason": "AI matching is not configured yet."
         }
     try:
-        import vertexai
-        from vertexai.generative_models import GenerativeModel
-        from flask import current_app
-        location = current_app.config.get('VERTEX_AI_LOCATION', 'us-central1')
-        vertexai.init(project=project, location="global")
-        model = GenerativeModel("gemini-2.5-flash")
+        from google import genai
+        from google.genai import types
+        client = genai.Client(vertexai=True, project=project, location='global')
         prompt = f"""You are a clinical trial eligibility expert. Analyze whether this patient qualifies for a clinical trial.
 
 PATIENT PROFILE:
@@ -426,16 +377,20 @@ PATIENT PROFILE:
 TRIAL ELIGIBILITY CRITERIA:
 {eligibility_criteria_text}
 
-Respond ONLY with valid JSON in this exact format:
+Respond ONLY with valid JSON:
 {{
   "verdict": "MATCH or PARTIAL_MATCH or NO_MATCH or UNKNOWN",
   "confidence": <integer 0-100>,
-  "match_reasons": ["<reason1>", "<reason2>"],
-  "exclusion_flags": ["<any hard exclusions triggered>"],
-  "missing_info": ["<info needed to make a firm determination>"],
-  "plain_english_summary": "<2 sentence plain language explanation for the patient>"
+  "match_reasons": ["<reason1>"],
+  "exclusion_flags": ["<hard exclusions triggered>"],
+  "missing_info": ["<info needed>"],
+  "plain_english_summary": "<2 sentence plain language explanation>"
 }}"""
-        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type='application/json')
+        )
         result = json.loads(response.text)
         result['status'] = result.get('verdict', 'UNKNOWN')
         result['reason'] = result.get('plain_english_summary', '')
@@ -452,32 +407,23 @@ Respond ONLY with valid JSON in this exact format:
 
 def extract_patient_profile_from_document(file_bytes, mime_type):
     """
-    Uses Gemini 1.5 Pro multimodal to extract a structured patient profile
-    from a PDF lab report, discharge summary, or medical image.
-    FIX: forces response_mime_type=application/json and strips markdown fences
-    as a fallback to prevent silent empty-extraction failures.
+    Uses Gemini 2.5 Flash multimodal via the new google-genai SDK to extract
+    a structured patient profile from a PDF/image medical document.
+    Forces response_mime_type=application/json to avoid markdown-wrapped output.
     """
     import json
-
     project = os.environ.get('GOOGLE_CLOUD_PROJECT')
     if not project:
         return {"error": "GOOGLE_CLOUD_PROJECT not configured.", "extraction_confidence": 0}
-
     try:
-        import vertexai
-        from vertexai.generative_models import GenerativeModel, Part
-        from flask import current_app
-
-        location = current_app.config.get('VERTEX_AI_LOCATION', 'us-central1')
-        vertexai.init(project=project, location=location)
-
-        model = GenerativeModel("gemini-2.5-flash")
-        document_part = Part.from_data(data=file_bytes, mime_type=mime_type)
-
+        from google import genai
+        from google.genai import types
+        client = genai.Client(vertexai=True, project=project, location='global')
+        document_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
         prompt = """Extract structured medical information from this document.
-Return ONLY valid JSON with no extra text:
+Return ONLY valid JSON:
 {
-  "diagnosis": ["<condition1>"],
+  "diagnosis": ["<condition>"],
   "age": null,
   "sex": null,
   "prior_treatments": ["<drug or therapy>"],
@@ -492,31 +438,22 @@ Return ONLY valid JSON with no extra text:
   "comorbidities": [],
   "current_medications": [],
   "extraction_confidence": <integer 0-100>,
-  "notes": "<anything ambiguous or worth flagging>"
+  "notes": "<anything ambiguous>"
 }"""
-
-        # Force JSON output mode so Gemini never wraps in markdown
-        response = model.generate_content(
-            [document_part, prompt],
-            generation_config={"response_mime_type": "application/json"}
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[document_part, prompt],
+            config=types.GenerateContentConfig(response_mime_type='application/json')
         )
-
         raw = response.text.strip()
-
-        # Belt-and-suspenders: strip ```json ... ``` fences if still present
-        if raw.startswith("```"):
+        # Belt-and-suspenders fence stripper
+        if raw.startswith('```'):
             raw = re.sub(r'^```[a-z]*\n?', '', raw)
             raw = re.sub(r'\n?```$', '', raw.strip())
-
-        result = json.loads(raw)
-        return result
-
+        return json.loads(raw)
     except Exception as e:
         print(f"Document extraction failed: {e}")
         return {
-            "error": str(e),
-            "extraction_confidence": 0,
-            "diagnosis": [],
-            "prior_treatments": [],
-            "labs": {}
+            "error": str(e), "extraction_confidence": 0,
+            "diagnosis": [], "prior_treatments": [], "labs": {}
         }
