@@ -416,8 +416,8 @@ def gemini_eligibility_check(patient_profile, eligibility_criteria_text, nct_id)
         from vertexai.generative_models import GenerativeModel
         from flask import current_app
         location = current_app.config.get('VERTEX_AI_LOCATION', 'us-central1')
-        vertexai.init(project=project, location=location)
-        model = GenerativeModel("gemini-1.5-pro")
+        vertexai.init(project=project, location="global")
+        model = GenerativeModel("gemini-2.5-flash")
         prompt = f"""You are a clinical trial eligibility expert. Analyze whether this patient qualifies for a clinical trial.
 
 PATIENT PROFILE:
@@ -471,7 +471,7 @@ def extract_patient_profile_from_document(file_bytes, mime_type):
         location = current_app.config.get('VERTEX_AI_LOCATION', 'us-central1')
         vertexai.init(project=project, location=location)
 
-        model = GenerativeModel("gemini-1.5-pro")
+        model = GenerativeModel("gemini-2.5-flash")
         document_part = Part.from_data(data=file_bytes, mime_type=mime_type)
 
         prompt = """Extract structured medical information from this document.
