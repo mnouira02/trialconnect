@@ -10,7 +10,7 @@
         <div class="row justify-content-center">
             <div class="col-md-10 col-lg-8 col-xl-7">
 
-                <!-- ── Profile Form Card ── -->
+                <!-- Profile Form Card -->
                 <div class="card shadow-lg border-0 rounded-lg mt-5">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h3 class="text-center fw-bolder my-4 flex-grow-1">Edit Profile</h3>
@@ -83,7 +83,7 @@
                     </div>
                 </div>
 
-                <!-- ── Medical Document Upload Card ── -->
+                <!-- Medical Document Upload Card -->
                 <div class="card shadow-lg border-0 rounded-lg mt-4 mb-5">
                     <div class="card-header">
                         <h3 class="text-center fw-bolder my-4">
@@ -181,7 +181,7 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
 
-    // ── Profile picture preview ──
+    // Profile picture preview
     const profileContainer = document.getElementById('profile-container');
     const fileInput = document.getElementById('profile_picture');
     const imagePreview = document.getElementById('image-preview');
@@ -197,22 +197,22 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // ── Profile form validation ──
-    const saveButton        = document.getElementById('save-button');
-    const firstNameInput    = document.getElementById('firstName');
-    const lastNameInput     = document.getElementById('lastName');
-    const birthYearInput    = document.getElementById('birthYear');
-    const sexInput          = document.getElementById('sex');
+    // Profile form validation
+    const saveButton           = document.getElementById('save-button');
+    const firstNameInput       = document.getElementById('firstName');
+    const lastNameInput        = document.getElementById('lastName');
+    const birthYearInput       = document.getElementById('birthYear');
+    const sexInput             = document.getElementById('sex');
     const currentPasswordInput = document.getElementById('current_password');
     const newPasswordInput     = document.getElementById('new_password');
     const confirmPasswordInput = document.getElementById('confirm_password');
     const validationBox = document.getElementById('password-validation-box');
     const criteria = {
-        length: document.getElementById('length'),
+        length:    document.getElementById('length'),
         uppercase: document.getElementById('uppercase'),
         lowercase: document.getElementById('lowercase'),
-        number: document.getElementById('number'),
-        match: document.getElementById('match')
+        number:    document.getElementById('number'),
+        match:     document.getElementById('match')
     };
 
     function validateFullForm() {
@@ -229,11 +229,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (isPasswordChangeAttempt) {
             validationBox.classList.remove('d-none');
             const validations = {
-                length: password.length >= 8,
+                length:    password.length >= 8,
                 uppercase: /[A-Z]/.test(password),
                 lowercase: /[a-z]/.test(password),
-                number: /[0-9]/.test(password),
-                match: password === confirm && password.length > 0
+                number:    /[0-9]/.test(password),
+                match:     password === confirm && password.length > 0
             };
             let allRulesMet = true;
             for (const key in validations) {
@@ -256,22 +256,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
     [firstNameInput, lastNameInput, birthYearInput, sexInput,
      currentPasswordInput, newPasswordInput, confirmPasswordInput].forEach(input => {
-        if (input) {
-            input.addEventListener((input.tagName === 'SELECT') ? 'change' : 'input', validateFullForm);
-        }
+        if (input) input.addEventListener((input.tagName === 'SELECT') ? 'change' : 'input', validateFullForm);
     });
     validateFullForm();
 
     // ── Medical Document Upload ──
-    const dropZone       = document.getElementById('drop-zone');
-    const medDocInput    = document.getElementById('med-doc-input');
-    const browseBtn      = document.getElementById('browse-btn');
-    const fileInfo       = document.getElementById('file-info');
-    const fileName       = document.getElementById('file-name');
-    const fileSize       = document.getElementById('file-size');
-    const clearFileBtn   = document.getElementById('clear-file-btn');
-    const uploadDocBtn   = document.getElementById('upload-doc-btn');
-    const uploadBtnText  = document.getElementById('upload-btn-text');
+    const dropZone         = document.getElementById('drop-zone');
+    const medDocInput      = document.getElementById('med-doc-input');
+    const browseBtn        = document.getElementById('browse-btn');
+    const fileInfo         = document.getElementById('file-info');
+    const fileName         = document.getElementById('file-name');
+    const fileSize         = document.getElementById('file-size');
+    const clearFileBtn     = document.getElementById('clear-file-btn');
+    const uploadDocBtn     = document.getElementById('upload-doc-btn');
+    const uploadBtnText    = document.getElementById('upload-btn-text');
     const uploadBtnSpinner = document.getElementById('upload-btn-spinner');
     const extractionResult = document.getElementById('extraction-result');
     const extractionFields = document.getElementById('extraction-fields');
@@ -279,11 +277,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const applyProfileBtn  = document.getElementById('apply-profile-btn');
     const uploadError      = document.getElementById('upload-error');
 
-    let selectedFile = null;
+    let selectedFile  = null;
     let extractedData = null;
 
     function formatBytes(bytes) {
-        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024)    return bytes + ' B';
         if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
         return (bytes / 1048576).toFixed(1) + ' MB';
     }
@@ -314,9 +312,8 @@ document.addEventListener('DOMContentLoaded', function() {
     medDocInput.addEventListener('change', () => { if (medDocInput.files[0]) setFile(medDocInput.files[0]); });
     clearFileBtn.addEventListener('click', clearFile);
 
-    // Drag & drop
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.background = '#e8f0fe'; });
-    dropZone.addEventListener('dragleave', () => { dropZone.style.background = ''; });
+    dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.style.background = '#e8f0fe'; });
+    dropZone.addEventListener('dragleave', ()  => { dropZone.style.background = ''; });
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.style.background = '';
@@ -324,7 +321,6 @@ document.addEventListener('DOMContentLoaded', function() {
         if (file) setFile(file);
     });
 
-    // Upload & extract
     uploadDocBtn.addEventListener('click', async () => {
         if (!selectedFile) return;
         uploadBtnText.classList.add('d-none');
@@ -342,8 +338,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (!response.ok) throw new Error(data.error || 'Upload failed');
 
-            extractedData = data;
-            renderExtraction(data);
+            // FIX: API wraps the profile in data.patient_profile
+            const profile = data.patient_profile || data;
+            if (profile.error) throw new Error(profile.error);
+
+            extractedData = profile;
+            renderExtraction(profile);
             extractionResult.classList.remove('d-none');
         } catch (err) {
             uploadError.textContent = '\u26a0\ufe0f ' + err.message;
@@ -357,16 +357,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function renderExtraction(data) {
         extractionFields.innerHTML = '';
-
         const fieldMap = [
-            { key: 'diagnosis',         label: 'Diagnosis',            icon: 'bi-heart-pulse' },
-            { key: 'age',               label: 'Age',                  icon: 'bi-calendar3' },
-            { key: 'sex',               label: 'Sex',                  icon: 'bi-person' },
-            { key: 'ecog_status',       label: 'ECOG Status',          icon: 'bi-activity' },
-            { key: 'comorbidities',     label: 'Comorbidities',        icon: 'bi-bandaid' },
-            { key: 'prior_treatments',  label: 'Prior Treatments',     icon: 'bi-capsule' },
-            { key: 'current_medications', label: 'Current Medications', icon: 'bi-prescription2' },
-            { key: 'labs',              label: 'Lab Values',           icon: 'bi-droplet' },
+            { key: 'diagnosis',           label: 'Diagnosis',            icon: 'bi-heart-pulse' },
+            { key: 'age',                 label: 'Age',                  icon: 'bi-calendar3' },
+            { key: 'sex',                 label: 'Sex',                  icon: 'bi-person' },
+            { key: 'comorbidities',       label: 'Comorbidities',        icon: 'bi-bandaid' },
+            { key: 'prior_treatments',    label: 'Prior Treatments',     icon: 'bi-capsule' },
+            { key: 'current_medications', label: 'Current Medications',  icon: 'bi-prescription2' },
+            { key: 'labs',                label: 'Lab Values',           icon: 'bi-droplet' },
+            { key: 'notes',               label: 'Notes',                icon: 'bi-info-circle' },
         ];
 
         let hasAny = false;
@@ -375,6 +374,11 @@ document.addEventListener('DOMContentLoaded', function() {
             if (val === null || val === undefined || val === '') return;
             if (Array.isArray(val) && val.length === 0) return;
             if (typeof val === 'object' && !Array.isArray(val) && Object.keys(val).length === 0) return;
+            // Skip lab object if all values are null
+            if (typeof val === 'object' && !Array.isArray(val)) {
+                const nonNull = Object.values(val).filter(v => v !== null && v !== undefined);
+                if (nonNull.length === 0) return;
+            }
 
             hasAny = true;
             const row = document.createElement('div');
@@ -385,6 +389,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 displayVal = val.join(', ');
             } else if (typeof val === 'object') {
                 displayVal = Object.entries(val)
+                    .filter(([, v]) => v !== null && v !== undefined)
                     .map(([k, v]) => `<span class="badge bg-white text-dark border me-1">${k.replace(/_/g,' ')}: ${v}</span>`)
                     .join(' ');
             } else {
@@ -411,12 +416,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Apply extracted data back to the profile form
     applyProfileBtn.addEventListener('click', async () => {
         if (!extractedData) return;
         applyProfileBtn.disabled = true;
         applyProfileBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving&hellip;';
-
         try {
             const res = await fetch('/api/apply_medical_profile', {
                 method: 'POST',
@@ -425,7 +428,6 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             const result = await res.json();
             if (!res.ok) throw new Error(result.error || 'Failed to save');
-
             extractionAlert.textContent = '\u2705 Medical profile saved! Your trial matches will now be more accurate.';
             extractionAlert.className = 'alert alert-success';
             extractionAlert.classList.remove('d-none');
