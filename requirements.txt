@@ -1,9 +1,9 @@
 Flask
 Flask-Session
 requests
-jinja2
-bootstrap@5.3.8
-sqlite3
+Jinja2
 Authlib
-jsonify
 python-dotenv
+Werkzeug
+pymongo[srv]
+google-cloud-aiplatform
