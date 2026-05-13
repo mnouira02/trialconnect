@@ -1,0 +1,15 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+*.db
+.env
+trialconnect/data/
+trialconnect/static/profile_pictures/
+*.md
+.dockerignore
+mcp_config.json
+npm-debug.log
+node_modules/
