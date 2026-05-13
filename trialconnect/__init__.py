@@ -14,8 +14,6 @@ def create_app():
     app = Flask(__name__)
 
     # --- Load all config from environment ---
-    # FLASK_SECRET_KEY must be set as a fixed string in production (Cloud Run env var)
-    # Never rely on the urandom fallback in production — sessions will break on restart
     app.secret_key = os.environ.get('FLASK_SECRET_KEY') or os.urandom(24)
     app.config['GOOGLE_MAPS_API_KEY'] = os.environ.get('GOOGLE_MAPS_API_KEY')
     app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID')
@@ -40,9 +38,25 @@ def create_app():
     with app.app_context():
         from . import routes
 
+    # --- App-wide ADK agent runner (persists across requests) ---
+    # This fixes the agent losing conversation memory between turns.
+    try:
+        from google.adk.sessions import InMemorySessionService
+        from google.adk.runners import Runner
+        from agent import root_agent
+        app.agent_session_service = InMemorySessionService()
+        app.agent_runner = Runner(
+            agent=root_agent,
+            app_name='trialconnect',
+            session_service=app.agent_session_service
+        )
+    except Exception as e:
+        print(f"Warning: ADK agent runner could not be initialized: {e}")
+        app.agent_session_service = None
+        app.agent_runner = None
+
     @app.before_request
     def load_logged_in_user():
-        # Restore session from remember_me cookie if not already logged in
         remember_token = request.cookies.get('remember_token')
         if not session.get('user') and remember_token:
             user = get_user_by_remember_token(remember_token)

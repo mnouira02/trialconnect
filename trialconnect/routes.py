@@ -57,6 +57,22 @@ def openapi_spec():
                     ],
                     "responses": {"200": {"description": "List of matching trials"}}
                 }
+            },
+            "/api/agent_chat": {
+                "post": {
+                    "operationId": "agentChat",
+                    "summary": "Chat with TrialConnect AI agent (requires login)",
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"message": {"type": "string"}, "context": {"type": "object"}}}}}},
+                    "responses": {"200": {"description": "Agent reply"}, "401": {"description": "Login required"}}
+                }
+            },
+            "/api/check_match/{nct_id}": {
+                "get": {
+                    "operationId": "checkMatch",
+                    "summary": "Check patient eligibility for a trial (requires login)",
+                    "parameters": [{"name": "nct_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "Eligibility result"}, "401": {"description": "Login required"}}
+                }
             }
         }
     }
@@ -77,24 +93,44 @@ def api_search():
         processed_studies = []
         patient_location = {"location": {"lat": user_lat, "lon": user_lon}}
         for study in search_results_raw:
-            min_distance = float('inf')
+            # --- Normalise field names (handles both MongoDB projection and CT.gov fallback) ---
+            study['nctId'] = study.get('nctId') or study.get('nct_id')
+            study['title'] = study.get('title') or study.get('brief_title') or study.get('briefTitle') or 'Unknown Title'
+            study['status'] = study.get('status') or study.get('overall_status') or study.get('overallStatus') or 'UNKNOWN'
+            study['conditions'] = study.get('conditions') or study.get('conditions_str') or ''
+
+            # --- Normalise locations: preserve geoPoint AND add flat lat/lon ---
+            normalised_locations = []
             for location in study.get('locations', []):
-                geo = location.get('geoPoint') or location
-                lat = geo.get('lat')
-                lon = geo.get('lon')
+                gp = location.get('geoPoint') or {}
+                lat = gp.get('lat') or location.get('lat')
+                lon = gp.get('lon') or location.get('lon')
                 if lat and lon:
-                    dist = haversine(user_lat, user_lon, lat, lon)
-                    if dist < min_distance:
-                        min_distance = dist
+                    normalised_locations.append({
+                        **location,
+                        'geoPoint': {'lat': float(lat), 'lon': float(lon)},
+                        'lat': float(lat),
+                        'lon': float(lon)
+                    })
+            study['locations'] = normalised_locations
+
+            # --- Compute closest distance ---
+            min_distance = float('inf')
+            for loc in normalised_locations:
+                dist = haversine(user_lat, user_lon, loc['lat'], loc['lon'])
+                if dist < min_distance:
+                    min_distance = dist
+
             if min_distance != float('inf'):
                 study['closest_distance_km'] = round(min_distance)
                 study['score'] = score_trial(study, patient_location)
                 processed_studies.append(study)
+
         promoted_set = get_all_promoted_studies_set()
         promoted_list = []
         regular_list = []
         for study in processed_studies:
-            if study['nctId'] in promoted_set:
+            if study.get('nctId') in promoted_set:
                 study['is_promoted'] = True
                 promoted_list.append(study)
                 log_promotion_analytic(study['nctId'], query)
@@ -181,9 +217,12 @@ def api_check_match(nct_id):
 
 
 # --- AI Chat Agent Endpoint ---
-# Thin wrapper around agent.py — all agent logic lives there as single source of truth.
 @app.route('/api/agent_chat', methods=['POST'])
 def api_agent_chat():
+    # Require login to prevent abuse and runaway Vertex AI costs
+    if not session.get('user'):
+        return jsonify({'reply': 'Please log in to use the AI assistant.'}), 401
+
     body = request.get_json(silent=True) or {}
     user_message = body.get('message', '').strip()
     context = body.get('context')
@@ -191,7 +230,6 @@ def api_agent_chat():
     if not user_message:
         return jsonify({'reply': 'Please ask me a question.'}), 400
 
-    # Prepend trial context so agent can answer grounded questions about what the user sees.
     full_message = user_message
     if context and context.get('trials'):
         trials_lines = [
@@ -208,7 +246,7 @@ def api_agent_chat():
         )
         full_message = f"{context_block}\n\n{user_message}"
 
-    # Stable session ID per browser session for conversation memory
+    # Stable session ID per browser session
     agent_session_id = session.get('agent_session_id')
     if not agent_session_id:
         agent_session_id = str(uuid.uuid4())
@@ -216,26 +254,33 @@ def api_agent_chat():
         session.modified = True
 
     try:
-        from google.adk.runners import Runner
-        from google.adk.sessions import InMemorySessionService
         from google.genai import types as gentypes
-        from agent import root_agent
 
-        session_service = InMemorySessionService()
+        # Use app-wide runner if available (preserves memory), else fallback
+        runner = getattr(current_app, 'agent_runner', None)
+        session_service = getattr(current_app, 'agent_session_service', None)
 
-        # ADK requires the session to be explicitly created before use
+        if runner is None:
+            from google.adk.runners import Runner
+            from google.adk.sessions import InMemorySessionService
+            from agent import root_agent
+            session_service = InMemorySessionService()
+            runner = Runner(
+                agent=root_agent,
+                app_name='trialconnect',
+                session_service=session_service
+            )
+
+        # Ensure session exists
         import asyncio
-        asyncio.run(session_service.create_session(
-            app_name='trialconnect',
-            user_id='user',
-            session_id=agent_session_id
-        ))
-
-        runner = Runner(
-            agent=root_agent,
-            app_name='trialconnect',
-            session_service=session_service
-        )
+        try:
+            asyncio.run(session_service.create_session(
+                app_name='trialconnect',
+                user_id='user',
+                session_id=agent_session_id
+            ))
+        except Exception:
+            pass  # Session may already exist
 
         reply = ''
         for event in runner.run(
@@ -254,86 +299,6 @@ def api_agent_chat():
     except Exception as e:
         print(f"Agent chat error: {e}")
         return jsonify({'reply': 'Sorry, I had trouble connecting to the AI agent. Please try again in a moment.'}), 500
-
-
-# --- MCP Endpoint for Vertex AI Agent Builder ---
-@app.route('/mcp', methods=['POST'])
-def mcp_handler():
-    body = request.get_json(silent=True)
-    if not body:
-        return jsonify({"error": "Invalid request body"}), 400
-    tool_name = body.get('tool')
-    params = body.get('parameters', {})
-
-    if tool_name == 'search_trials':
-        condition = params.get('condition', '')
-        location = params.get('location', '')
-        lat = params.get('lat')
-        lon = params.get('lon')
-        if not lat or not lon:
-            try:
-                maps_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
-                geo_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={requests.utils.quote(location)}&key={maps_key}"
-                geo_resp = requests.get(geo_url, timeout=5).json()
-                if geo_resp.get('results'):
-                    loc = geo_resp['results'][0]['geometry']['location']
-                    lat = loc['lat']
-                    lon = loc['lng']
-                else:
-                    return jsonify({"error": f"Could not geocode location: {location}"}), 400
-            except Exception as e:
-                return jsonify({"error": f"Geocoding failed: {str(e)}"}), 500
-        try:
-            raw_results = search_trials_mongo(condition, lat, lon, radius_km=300)
-            output = []
-            for study in raw_results[:5]:
-                min_distance = float('inf')
-                for loc in study.get('locations', []):
-                    geo = loc.get('geoPoint') or loc
-                    slat = geo.get('lat')
-                    slon = geo.get('lon')
-                    if slat and slon:
-                        dist = haversine(lat, lon, slat, slon)
-                        if dist < min_distance:
-                            min_distance = dist
-                output.append({
-                    "nctId": study.get('nctId'),
-                    "title": study.get('briefTitle'),
-                    "status": study.get('overallStatus'),
-                    "conditions": study.get('conditions', []),
-                    "interventions": [i.get('name', '') for i in study.get('interventions', [])][:3],
-                    "closest_site_km": round(min_distance) if min_distance != float('inf') else None,
-                    "url": f"https://clinicaltrials.gov/study/{study.get('nctId')}"
-                })
-            return jsonify({"trials": output, "count": len(output)})
-        except Exception as e:
-            return jsonify({"error": f"Search failed: {str(e)}"}), 500
-
-    elif tool_name == 'check_eligibility':
-        nct_id = params.get('nct_id')
-        if not nct_id:
-            return jsonify({"error": "nct_id is required"}), 400
-        patient_profile = {k: v for k, v in {
-            "age": params.get('age'), "sex": params.get('sex', '').upper(),
-            "diagnosis": params.get('diagnosis', ''),
-            "prior_treatments": params.get('prior_treatments', ''),
-            "comorbidities": params.get('comorbidities', '')
-        }.items() if v}
-        try:
-            eligibility_text = fetch_trial_eligibility_text(nct_id)
-            if not eligibility_text:
-                return jsonify({"status": "NO_DATA", "reason": "No eligibility criteria found."})
-            return jsonify(gemini_eligibility_check(patient_profile, eligibility_text, nct_id))
-        except Exception as e:
-            return jsonify({"error": f"Eligibility check failed: {str(e)}"}), 500
-
-    else:
-        return jsonify({"tools": [
-            {"name": "search_trials", "description": "Search clinical trials by condition and location",
-             "parameters": {"condition": {"type": "string", "required": True}, "location": {"type": "string", "required": True}}},
-            {"name": "check_eligibility", "description": "Check patient eligibility for a trial using Gemini AI",
-             "parameters": {"nct_id": {"type": "string", "required": True}, "age": {"type": "integer"}, "sex": {"type": "string"}, "diagnosis": {"type": "string"}}}
-        ]})
 
 
 # --- Static Page Routes ---

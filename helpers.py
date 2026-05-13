@@ -35,17 +35,24 @@ def init_db():
     """Create MongoDB indexes on startup (idempotent)."""
     try:
         db = _get_db_direct()
-        # users
         db['users'].create_index('email', unique=True)
         db['users'].create_index('remember_token')
-        # contacts
         db['contacts'].create_index([('created_at', ASCENDING)])
-        # promoted_studies
         db['promoted_studies'].create_index('nct_id', unique=True)
-        # promotion_analytics
         db['promotion_analytics'].create_index('nct_id')
-        # trials — text + vector (vector index managed via Atlas UI)
-        db['trials'].create_index([('brief_title', TEXT), ('conditions_str', TEXT)])
+        # Drop conflicting text index if it exists, then recreate cleanly
+        existing_indexes = db['trials'].index_information()
+        for idx_name in list(existing_indexes.keys()):
+            if idx_name not in ('_id_',) and 'text' in str(existing_indexes[idx_name].get('key', {})):
+                try:
+                    db['trials'].drop_index(idx_name)
+                    print(f"Dropped conflicting text index: {idx_name}")
+                except Exception:
+                    pass
+        db['trials'].create_index(
+            [('brief_title', TEXT), ('conditions_str', TEXT)],
+            name='trial_text_index'
+        )
         print("MongoDB indexes initialized successfully.")
     except Exception as e:
         print(f"MongoDB index init warning: {e}")
@@ -160,7 +167,6 @@ def allowed_file(filename):
 def get_all_promoted_studies():
     db = get_mongo_db()
     docs = list(db['promoted_studies'].find({}, {'_id': 0}).sort('added_at', -1))
-    # Normalise key name to match admin template expectations
     for d in docs:
         if 'nct_id' in d and 'nct_id' not in d:
             d['nct_id'] = d['nct_id']
@@ -511,7 +517,7 @@ Return ONLY valid JSON:
             raw = re.sub(r'\n?```$', '', raw.strip())
         return json.loads(raw)
     except Exception as e:
-        print(f"Document extraction failed: {e}")
+tml(f"Document extraction failed: {e}")
         return {
             "error": str(e), "extraction_confidence": 0,
             "diagnosis": [], "prior_treatments": [], "labs": {}
