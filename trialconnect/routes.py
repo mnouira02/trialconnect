@@ -221,10 +221,20 @@ def api_agent_chat():
         from google.genai import types as gentypes
         from agent import root_agent
 
+        session_service = InMemorySessionService()
+
+        # ADK requires the session to be explicitly created before use
+        import asyncio
+        asyncio.run(session_service.create_session(
+            app_name='trialconnect',
+            user_id='user',
+            session_id=agent_session_id
+        ))
+
         runner = Runner(
             agent=root_agent,
             app_name='trialconnect',
-            session_service=InMemorySessionService()
+            session_service=session_service
         )
 
         reply = ''
@@ -571,8 +581,7 @@ def delete_account():
     if 'user' not in session:
         abort(403)
     user_id = session['user']['id']
-    email = session['user']['email'
-    ]
+    email = session['user']['email']
     if email == 'frenchieeap@gmail.com':
         flash("The primary admin account cannot be deleted.", "danger")
         return redirect(url_for('profile'))
