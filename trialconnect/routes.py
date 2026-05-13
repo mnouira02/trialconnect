@@ -1,14 +1,13 @@
-# trialconnect/routes.py
-
 import secrets
 from datetime import datetime, timedelta, timezone
 from flask import get_flashed_messages, render_template, request, redirect, url_for, session, current_app, abort, flash, make_response, jsonify
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 import os, uuid, requests
+from bson import ObjectId
 from .oauth_setup import oauth
 from helpers import (
-    add_contact_message, get_or_create_user, get_db, get_user_by_email,
+    add_contact_message, get_or_create_user, get_mongo_db, get_user_by_email,
     validate_password_strength, allowed_file,
     get_user_by_id, search_clinical_trials, get_location_from_ip, haversine,
     remove_promoted_study, get_all_promoted_studies, get_all_promoted_studies_set,
@@ -109,17 +108,11 @@ def api_upload_profile():
 
 @app.route('/api/apply_medical_profile', methods=['POST'])
 def api_apply_medical_profile():
-    """
-    Saves the Gemini-extracted medical profile fields (diagnosis, labs, etc.)
-    to the user's session so check_match can use them without re-uploading.
-    Stores as 'medical_profile' key in session.
-    """
     if not session.get('user'):
         return jsonify({"error": "Not logged in."}), 401
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "No data provided."}), 400
-    # Store in session for use by check_match
     session['medical_profile'] = data
     session.modified = True
     return jsonify({"status": "ok", "message": "Medical profile saved to session."})
@@ -137,27 +130,20 @@ def api_check_match(nct_id):
         patient_profile['age'] = datetime.now().year - int(user_data['birthYear'])
     if user_data.get('sex'):
         patient_profile['sex'] = user_data['sex'].upper()
-
-    # Merge medical profile from session (set by apply_medical_profile)
     session_medical = session.get('medical_profile', {})
     if session_medical:
         patient_profile.update(session_medical)
-
-    # Also accept enrichment from POST body (direct API calls / tests)
     enriched = {}
     if request.method == 'POST':
         enriched = request.get_json(silent=True) or {}
         patient_profile.update(enriched)
-
     has_enriched_data = any(
         k in patient_profile for k in ('diagnosis', 'labs', 'prior_treatments', 'comorbidities')
     )
-
     if not has_enriched_data:
         if not patient_profile.get('age') or not patient_profile.get('sex'):
             return jsonify({"status": "NO_DATA", "reason": "User profile is incomplete."})
         return jsonify(check_user_study_match(user_data, nct_id))
-
     try:
         eligibility_text = fetch_trial_eligibility_text(nct_id)
         if not eligibility_text:
@@ -310,10 +296,11 @@ def forgot_password():
             session[f'otp_for_{email}'] = otp
             otp_hash = generate_password_hash(otp)
             expiration = datetime.utcnow() + timedelta(minutes=10)
-            db = get_db()
-            db.execute("UPDATE users SET reset_token = ?, reset_token_expiration = ? WHERE id = ?",
-                       (otp_hash, expiration, user['id']))
-            db.commit()
+            db = get_mongo_db()
+            db['users'].update_one(
+                {'email': email},
+                {'$set': {'reset_token': otp_hash, 'reset_token_expiration': expiration}}
+            )
         flash("If an account with that email exists, a password reset code has been sent.", "success")
         return redirect(url_for('index'))
     return render_template("forgot_password.html")
@@ -327,10 +314,14 @@ def reset_with_token():
         new_password = request.form.get('new_password')
         confirm_password = request.form.get('confirm_password')
         user = get_user_by_email(email)
-        if not user or not user['reset_token'] or not check_password_hash(user['reset_token'], otp):
+        if not user or not user.get('reset_token') or not check_password_hash(user['reset_token'], otp):
             flash("Invalid email or reset code.", "danger")
             return redirect(url_for('reset_with_token'))
-        expiration_time = datetime.fromisoformat(user['reset_token_expiration']).replace(tzinfo=timezone.utc)
+        expiration_time = user['reset_token_expiration']
+        if isinstance(expiration_time, str):
+            expiration_time = datetime.fromisoformat(expiration_time).replace(tzinfo=timezone.utc)
+        elif expiration_time.tzinfo is None:
+            expiration_time = expiration_time.replace(tzinfo=timezone.utc)
         if expiration_time < datetime.now(timezone.utc):
             flash("The reset code has expired. Please request a new one.", "danger")
             session.pop(f'otp_for_{email}', None)
@@ -344,10 +335,11 @@ def reset_with_token():
             flash("Passwords do not match.", "danger")
             return redirect(url_for('reset_with_token'))
         new_password_hash = generate_password_hash(new_password)
-        db = get_db()
-        db.execute("UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expiration = NULL WHERE id = ?",
-                   (new_password_hash, user['id']))
-        db.commit()
+        db = get_mongo_db()
+        db['users'].update_one(
+            {'email': email},
+            {'$set': {'password_hash': new_password_hash, 'reset_token': None, 'reset_token_expiration': None}}
+        )
         session.pop(f'otp_for_{email}', None)
         flash("Your password has been successfully reset. Please log in.", "success")
         return redirect(url_for('login'))
@@ -361,13 +353,17 @@ def profile():
         return redirect(url_for('login'))
     user_id = session['user']['id']
     if request.method == 'POST':
-        db = get_db()
+        db = get_mongo_db()
         firstName = request.form.get('firstName')
         lastName = request.form.get('lastName')
         birthYear = request.form.get('birthYear')
         sex = request.form.get('sex')
-        db.execute("UPDATE users SET firstName = ?, lastName = ?, birthYear = ?, sex = ? WHERE id = ?",
-                   (firstName, lastName, birthYear, sex, user_id))
+        update_fields = {
+            'firstName': firstName,
+            'lastName': lastName,
+            'birthYear': birthYear,
+            'sex': sex
+        }
         if 'profile_picture' in request.files:
             file = request.files['profile_picture']
             if file and file.filename and allowed_file(file.filename):
@@ -375,8 +371,7 @@ def profile():
                 unique_filename = str(uuid.uuid4()) + "_" + filename
                 filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], unique_filename)
                 file.save(filepath)
-                db.execute("UPDATE users SET profile_picture_url = ? WHERE id = ?",
-                           (url_for('static', filename=f'profile_pictures/{unique_filename}'), user_id))
+                update_fields['profile_picture_url'] = url_for('static', filename=f'profile_pictures/{unique_filename}')
         new_password = request.form.get('new_password')
         if new_password:
             current_password = request.form.get('current_password')
@@ -389,10 +384,12 @@ def profile():
             elif new_password != confirm_password:
                 flash("The new passwords do not match.", "danger")
             else:
-                new_password_hash = generate_password_hash(new_password)
-                db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_password_hash, user_id))
+                update_fields['password_hash'] = generate_password_hash(new_password)
                 flash("Your password was updated successfully!", "success")
-        db.commit()
+        db['users'].update_one(
+            {'_id': ObjectId(user_id)},
+            {'$set': update_fields}
+        )
         session['user'] = get_user_by_id(user_id)
         password_flashed = any(
             cat in ['success', 'danger']
@@ -415,9 +412,8 @@ def delete_account():
     if email == 'frenchieeap@gmail.com':
         flash("The primary admin account cannot be deleted.", "danger")
         return redirect(url_for('profile'))
-    db = get_db()
-    db.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    db.commit()
+    db = get_mongo_db()
+    db['users'].delete_one({'_id': ObjectId(user_id)})
     session.clear()
     flash("Your account has been permanently deleted.", "success")
     return redirect(url_for('index'))
@@ -428,58 +424,71 @@ def delete_account():
 def admin():
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
         abort(403)
-    db = get_db()
-    users_raw = db.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
-    contacts = db.execute("SELECT * FROM contacts ORDER BY id DESC").fetchall()
+    db = get_mongo_db()
+    users_raw = list(db['users'].find({}).sort('created_at', -1))
+    contacts = list(db['contacts'].find({}).sort('_id', -1))
     promoted_list_raw = get_all_promoted_studies()
     promoted_list = []
-    for study_row in promoted_list_raw:
-        study = dict(study_row)
-        try:
-            study['added_at'] = datetime.strptime(study['added_at'], '%Y-%m-%d %H:%M:%S')
-        except (ValueError, TypeError, KeyError):
-            study['added_at'] = datetime.now(timezone.utc)
-        promoted_list.append(study)
-    processed_users = []
-    for user_row in users_raw:
-        user = dict(user_row)
-        user['token_status'] = 'none'
-        if user.get('reset_token_expiration'):
+    for study in promoted_list_raw:
+        s = dict(study)
+        if isinstance(s.get('added_at'), str):
             try:
-                expiration_time = datetime.fromisoformat(user['reset_token_expiration'])
-                if expiration_time > datetime.now(timezone.utc):
+                s['added_at'] = datetime.strptime(s['added_at'], '%Y-%m-%d %H:%M:%S')
+            except (ValueError, TypeError):
+                s['added_at'] = datetime.now(timezone.utc)
+        promoted_list.append(s)
+    processed_users = []
+    for user_doc in users_raw:
+        user = dict(user_doc)
+        user['id'] = str(user.pop('_id'))
+        user['token_status'] = 'none'
+        exp = user.get('reset_token_expiration')
+        if exp:
+            try:
+                if isinstance(exp, str):
+                    exp = datetime.fromisoformat(exp)
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                if exp > datetime.now(timezone.utc):
                     user['token_status'] = 'valid'
-                    user['formatted_expiration'] = expiration_time.strftime('%H:%M:%S UTC')
+                    user['formatted_expiration'] = exp.strftime('%H:%M:%S UTC')
                 else:
                     user['token_status'] = 'expired'
             except (ValueError, TypeError):
                 user['token_status'] = 'error'
         processed_users.append(user)
+    # Convert contact _id to string for template
+    for c in contacts:
+        c['id'] = str(c.pop('_id'))
     return render_template("admin.html", users=processed_users, contacts=contacts, promoted_list=promoted_list)
 
 
-@app.route('/admin/delete_user/<int:user_id>', methods=['POST'])
+@app.route('/admin/delete_user/<user_id>', methods=['POST'])
 def delete_user(user_id):
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
         abort(403)
-    db = get_db()
-    user_to_delete = db.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
-    if user_to_delete and user_to_delete['email'] == 'frenchieeap@gmail.com':
+    db = get_mongo_db()
+    try:
+        user_to_delete = db['users'].find_one({'_id': ObjectId(user_id)})
+    except Exception:
+        abort(400)
+    if user_to_delete and user_to_delete.get('email') == 'frenchieeap@gmail.com':
         flash("You cannot delete the primary admin account.", "danger")
         return redirect(url_for('admin'))
-    db.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    db.commit()
+    db['users'].delete_one({'_id': ObjectId(user_id)})
     flash("User has been successfully deleted.", "success")
     return redirect(url_for('admin'))
 
 
-@app.route('/admin/delete_contact/<int:contact_id>', methods=['POST'])
+@app.route('/admin/delete_contact/<contact_id>', methods=['POST'])
 def delete_contact(contact_id):
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
         abort(403)
-    db = get_db()
-    db.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
-    db.commit()
+    db = get_mongo_db()
+    try:
+        db['contacts'].delete_one({'_id': ObjectId(contact_id)})
+    except Exception:
+        abort(400)
     flash("Contact message has been successfully deleted.", "success")
     return redirect(url_for('admin'))
 
@@ -488,10 +497,9 @@ def delete_contact(contact_id):
 def clear_data():
     if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
         abort(403)
-    db = get_db()
-    db.execute("DELETE FROM users WHERE email != ?", ('frenchieeap@gmail.com',))
-    db.execute("DELETE FROM contacts")
-    db.commit()
+    db = get_mongo_db()
+    db['users'].delete_many({'email': {'$ne': 'frenchieeap@gmail.com'}})
+    db['contacts'].delete_many({})
     flash("All user and contact entries (except for the admin account) have been successfully deleted.", "success")
     return redirect(url_for('admin'))
 
