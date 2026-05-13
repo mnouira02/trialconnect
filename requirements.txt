@@ -8,3 +8,4 @@ Werkzeug
 pymongo[srv]
 google-cloud-aiplatform
 google-adk
+nest_asyncio

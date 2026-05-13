@@ -14,10 +14,18 @@ from helpers import (
     add_promoted_study, log_promotion_analytic, check_user_study_match,
     search_trials_mongo, score_trial,
     fetch_trial_eligibility_text, gemini_eligibility_check,
-    extract_patient_profile_from_document
+    extract_patient_profile_from_document,
+    save_patient_dossier, load_patient_dossier
 )
 
 app = current_app
+
+# ---------------------------------------------------------------------------
+# Helper: resolve admin email from env (never hardcoded)
+# ---------------------------------------------------------------------------
+def _is_admin():
+    admin_email = os.environ.get('ADMIN_EMAIL', '')
+    return bool(admin_email) and session.get('user', {}).get('email') == admin_email
 
 
 # --- Page Routes ---
@@ -98,6 +106,7 @@ def api_search():
             study['title'] = study.get('title') or study.get('brief_title') or study.get('briefTitle') or 'Unknown Title'
             study['status'] = study.get('status') or study.get('overall_status') or study.get('overallStatus') or 'UNKNOWN'
             study['conditions'] = study.get('conditions') or study.get('conditions_str') or ''
+            study['interventions'] = study.get('interventions') or []
 
             # --- Normalise locations: preserve geoPoint AND add flat lat/lon ---
             normalised_locations = []
@@ -174,9 +183,19 @@ def api_apply_medical_profile():
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "No data provided."}), 400
+
+    user_id = session['user']['id']
+
+    # --- FIX 1: Persist dossier to MongoDB so it survives session expiry ---
+    try:
+        save_patient_dossier(user_id, data)
+    except Exception as e:
+        print(f"Warning: could not persist dossier to MongoDB: {e}")
+
+    # Keep session copy for fast same-request access
     session['medical_profile'] = data
     session.modified = True
-    return jsonify({"status": "ok", "message": "Medical profile saved to session."})
+    return jsonify({"status": "ok", "message": "Medical profile saved to session and dossier."})
 
 
 @app.route('/api/check_match/<nct_id>', methods=['GET', 'POST'])
@@ -191,9 +210,20 @@ def api_check_match(nct_id):
         patient_profile['age'] = datetime.now().year - int(user_data['birthYear'])
     if user_data.get('sex'):
         patient_profile['sex'] = user_data['sex'].upper()
-    session_medical = session.get('medical_profile', {})
+
+    # --- FIX 1: Load dossier from MongoDB if session cache is empty ---
+    session_medical = session.get('medical_profile')
+    if not session_medical:
+        try:
+            session_medical = load_patient_dossier(user_data['id'])
+            if session_medical:
+                session['medical_profile'] = session_medical
+                session.modified = True
+        except Exception as e:
+            print(f"Warning: could not load dossier from MongoDB: {e}")
     if session_medical:
         patient_profile.update(session_medical)
+
     enriched = {}
     if request.method == 'POST':
         enriched = request.get_json(silent=True) or {}
@@ -219,7 +249,6 @@ def api_check_match(nct_id):
 # --- AI Chat Agent Endpoint ---
 @app.route('/api/agent_chat', methods=['POST'])
 def api_agent_chat():
-    # Require login to prevent abuse and runaway Vertex AI costs
     if not session.get('user'):
         return jsonify({'reply': 'Please log in to use the AI assistant.'}), 401
 
@@ -246,7 +275,6 @@ def api_agent_chat():
         )
         full_message = f"{context_block}\n\n{user_message}"
 
-    # Stable session ID per browser session
     agent_session_id = session.get('agent_session_id')
     if not agent_session_id:
         agent_session_id = str(uuid.uuid4())
@@ -256,7 +284,6 @@ def api_agent_chat():
     try:
         from google.genai import types as gentypes
 
-        # Use app-wide runner if available (preserves memory), else fallback
         runner = getattr(current_app, 'agent_runner', None)
         session_service = getattr(current_app, 'agent_session_service', None)
 
@@ -271,14 +298,21 @@ def api_agent_chat():
                 session_service=session_service
             )
 
-        # Ensure session exists
+        # --- FIX 2: Use nest_asyncio to safely run async ADK calls inside
+        #     a synchronous Flask/Gunicorn worker that may already have a loop.
         import asyncio
+        import nest_asyncio
+        nest_asyncio.apply()
+
+        loop = asyncio.get_event_loop()
         try:
-            asyncio.run(session_service.create_session(
-                app_name='trialconnect',
-                user_id='user',
-                session_id=agent_session_id
-            ))
+            loop.run_until_complete(
+                session_service.create_session(
+                    app_name='trialconnect',
+                    user_id='user',
+                    session_id=agent_session_id
+                )
+            )
         except Exception:
             pass  # Session may already exist
 
@@ -348,6 +382,13 @@ def login():
         user = get_user_by_email(email)
         if user and check_password_hash(user['password_hash'], password):
             session['user'] = user
+            # Restore persisted dossier into session on login
+            try:
+                dossier = load_patient_dossier(user['id'])
+                if dossier:
+                    session['medical_profile'] = dossier
+            except Exception as e:
+                print(f"Warning: could not restore dossier on login: {e}")
             flash('You have been logged in successfully.', 'success')
             response = make_response(redirect(url_for('index')))
             if remember:
@@ -421,6 +462,13 @@ def authorize():
         profile_picture_url=user_info.get('picture')
     )
     session['user'] = user
+    # Restore persisted dossier into session on Google login
+    try:
+        dossier = load_patient_dossier(user['id'])
+        if dossier:
+            session['medical_profile'] = dossier
+    except Exception as e:
+        print(f"Warning: could not restore dossier on Google login: {e}")
     return redirect(url_for('index'))
 
 
@@ -546,12 +594,13 @@ def delete_account():
     if 'user' not in session:
         abort(403)
     user_id = session['user']['id']
-    email = session['user']['email']
-    if email == 'frenchieeap@gmail.com':
+    admin_email = os.environ.get('ADMIN_EMAIL', '')
+    if admin_email and session['user'].get('email') == admin_email:
         flash("The primary admin account cannot be deleted.", "danger")
         return redirect(url_for('profile'))
     db = get_mongo_db()
     db['users'].delete_one({'_id': ObjectId(user_id)})
+    db['patient_dossiers'].delete_one({'user_id': user_id})
     session.clear()
     flash("Your account has been permanently deleted.", "success")
     return redirect(url_for('index'))
@@ -560,7 +609,8 @@ def delete_account():
 # --- Admin Routes ---
 @app.route('/admin')
 def admin():
-    if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
+    # --- FIX 3: Admin check via env var, never hardcoded ---
+    if not _is_admin():
         abort(403)
     db = get_mongo_db()
     users_raw = list(db['users'].find({}).sort('created_at', -1))
@@ -602,14 +652,15 @@ def admin():
 
 @app.route('/admin/delete_user/<user_id>', methods=['POST'])
 def delete_user(user_id):
-    if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
+    if not _is_admin():
         abort(403)
     db = get_mongo_db()
+    admin_email = os.environ.get('ADMIN_EMAIL', '')
     try:
         user_to_delete = db['users'].find_one({'_id': ObjectId(user_id)})
     except Exception:
         abort(400)
-    if user_to_delete and user_to_delete.get('email') == 'frenchieeap@gmail.com':
+    if user_to_delete and admin_email and user_to_delete.get('email') == admin_email:
         flash("You cannot delete the primary admin account.", "danger")
         return redirect(url_for('admin'))
     db['users'].delete_one({'_id': ObjectId(user_id)})
@@ -619,7 +670,7 @@ def delete_user(user_id):
 
 @app.route('/admin/delete_contact/<contact_id>', methods=['POST'])
 def delete_contact(contact_id):
-    if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
+    if not _is_admin():
         abort(403)
     db = get_mongo_db()
     try:
@@ -632,10 +683,11 @@ def delete_contact(contact_id):
 
 @app.route('/admin/clear_data', methods=['POST'])
 def clear_data():
-    if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
+    if not _is_admin():
         abort(403)
     db = get_mongo_db()
-    db['users'].delete_many({'email': {'$ne': 'frenchieeap@gmail.com'}})
+    admin_email = os.environ.get('ADMIN_EMAIL', '')
+    db['users'].delete_many({'email': {'$ne': admin_email}})
     db['contacts'].delete_many({})
     flash("All user and contact entries (except for the admin account) have been successfully deleted.", "success")
     return redirect(url_for('admin'))
@@ -643,7 +695,7 @@ def clear_data():
 
 @app.route("/admin/promote/add", methods=["POST"])
 def add_promotion():
-    if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
+    if not _is_admin():
         abort(403)
     nct_id = request.form.get("nct_id")
     if nct_id:
@@ -656,7 +708,7 @@ def add_promotion():
 
 @app.route("/admin/promote/remove/<nct_id>", methods=["POST"])
 def remove_promotion(nct_id):
-    if not session.get('user') or session['user'].get('email') != 'frenchieeap@gmail.com':
+    if not _is_admin():
         abort(403)
     remove_promoted_study(nct_id)
     flash(f"{nct_id} removed from promotions.", "success")

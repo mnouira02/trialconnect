@@ -6,6 +6,9 @@ import secrets, requests, warnings
 from pymongo import MongoClient, ASCENDING, TEXT
 from pymongo.errors import DuplicateKeyError
 
+# Suppress residual SSL warnings globally
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
 
@@ -40,6 +43,8 @@ def init_db():
         db['contacts'].create_index([('created_at', ASCENDING)])
         db['promoted_studies'].create_index('nct_id', unique=True)
         db['promotion_analytics'].create_index('nct_id')
+        # patient_dossiers: one document per user, indexed on user_id
+        db['patient_dossiers'].create_index('user_id', unique=True)
         # Drop conflicting text index if it exists, then recreate cleanly
         existing_indexes = db['trials'].index_information()
         for idx_name in list(existing_indexes.keys()):
@@ -161,6 +166,33 @@ def allowed_file(filename):
 
 
 # =============================================================================
+# Patient Dossier — persistent MongoDB storage
+# =============================================================================
+
+def save_patient_dossier(user_id, profile_data):
+    """Upsert the patient dossier for a given user into MongoDB."""
+    db = get_mongo_db()
+    db['patient_dossiers'].update_one(
+        {'user_id': user_id},
+        {'$set': {
+            'user_id': user_id,
+            'profile': profile_data,
+            'updated_at': datetime.datetime.utcnow()
+        }},
+        upsert=True
+    )
+
+
+def load_patient_dossier(user_id):
+    """Load the patient dossier for a given user from MongoDB.
+    Returns the profile dict, or an empty dict if none exists.
+    """
+    db = get_mongo_db()
+    doc = db['patient_dossiers'].find_one({'user_id': user_id}, {'_id': 0, 'profile': 1})
+    return doc.get('profile', {}) if doc else {}
+
+
+# =============================================================================
 # Promoted Studies
 # =============================================================================
 
@@ -265,7 +297,7 @@ def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
         "format": "json"
     }
     try:
-        response = requests.get(base_url, params=params, verify=False)
+        response = requests.get(base_url, params=params)
         response.raise_for_status()
         data = response.json()
     except requests.exceptions.RequestException as e:
@@ -278,15 +310,21 @@ def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
             id_module = protocol.get("identificationModule", {})
             status_module = protocol.get("statusModule", {})
             conditions_module = protocol.get("conditionsModule", {})
+            interventions_module = protocol.get("armsInterventionsModule", {})
             locations_list = []
             for loc in protocol.get("contactsLocationsModule", {}).get("locations", []):
-                location_data = {k: loc.get(k) for k in ["facility","city","state","zip","country","geoPoint"]}
+                location_data = {k: loc.get(k) for k in ["facility", "city", "state", "zip", "country", "geoPoint"]}
                 locations_list.append({k: v for k, v in location_data.items() if v is not None})
+            interventions_list = [
+                {'name': i.get('interventionName', ''), 'type': i.get('interventionType', '')}
+                for i in interventions_module.get('interventions', [])
+            ]
             formatted_trials.append({
                 "nctId": id_module.get("nctId"),
                 "title": id_module.get("briefTitle"),
                 "status": status_module.get("overallStatus"),
                 "conditions": ", ".join(conditions_module.get("conditions", [])),
+                "interventions": interventions_list,
                 "locations": locations_list
             })
     return formatted_trials
@@ -333,19 +371,20 @@ def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
                     "numCandidates": 200, "limit": 100
                 }},
                 {"$addFields": {"vector_score": {"$meta": "vectorSearchScore"}}},
-                {"$match": {"overall_status": {"$in": ["RECRUITING","NOT_YET_RECRUITING","AVAILABLE"]}}},
+                {"$match": {"overall_status": {"$in": ["RECRUITING", "NOT_YET_RECRUITING", "AVAILABLE"]}}},
                 {"$project": {
                     "_id": 0, "nctId": "$nct_id", "title": "$brief_title",
                     "status": "$overall_status", "conditions": "$conditions_str",
-                    "locations": "$locations", "eligibility_criteria": 1, "vector_score": 1
+                    "locations": "$locations", "eligibility_criteria": 1,
+                    "interventions": 1, "vector_score": 1
                 }}
             ]
             return list(collection.aggregate(pipeline))
         else:
             return list(collection.find(
-                {"$text": {"$search": query}, "overall_status": {"$in": ["RECRUITING","NOT_YET_RECRUITING","AVAILABLE"]}},
+                {"$text": {"$search": query}, "overall_status": {"$in": ["RECRUITING", "NOT_YET_RECRUITING", "AVAILABLE"]}},
                 {"_id": 0, "nctId": "$nct_id", "title": "$brief_title", "status": "$overall_status",
-                 "conditions": "$conditions_str", "locations": 1, "eligibility_criteria": 1}
+                 "conditions": "$conditions_str", "locations": 1, "eligibility_criteria": 1, "interventions": 1}
             ).limit(100))
     except Exception as e:
         print(f"MongoDB search failed: {e} — falling back to ClinicalTrials.gov API")
@@ -364,8 +403,7 @@ def fetch_trial_eligibility_text(nct_id):
             print(f"MongoDB eligibility fetch failed for {nct_id}: {e}")
     try:
         url = f"https://clinicaltrials.gov/api/v2/studies/{nct_id}?fields=EligibilityModule"
-        warnings.filterwarnings('ignore', message='Unverified HTTPS request')
-        response = requests.get(url, timeout=10, verify=False)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         eligibility = response.json().get("protocolSection", {}).get("eligibilityModule", {})
         return eligibility.get("eligibilityCriteria")
@@ -389,8 +427,7 @@ def check_user_study_match(user_profile, nct_id):
         return {'status': 'NO_DATA', 'reason': 'Invalid user profile data.'}
     try:
         url = f"https://clinicaltrials.gov/api/v2/studies/{nct_id}?fields=EligibilityModule"
-        warnings.filterwarnings('ignore', message='Unverified HTTPS request')
-        response = requests.get(url, timeout=5, verify=False)
+        response = requests.get(url, timeout=5)
         response.raise_for_status()
         eligibility = response.json().get("protocolSection", {}).get("eligibilityModule", {})
     except requests.exceptions.RequestException as e:
@@ -400,7 +437,7 @@ def check_user_study_match(user_profile, nct_id):
         return {'status': 'NO_DATA', 'reason': 'No eligibility data available.'}
     study_sex = eligibility.get('sex', 'ALL').upper()
     is_sex_match = study_sex == 'ALL' or study_sex == user_sex
-    min_age = int((re.search(r'\d+', eligibility.get('minimumAge','0 Years')) or type('',(),{'group':lambda s,x:'0'})()).group(0))
+    min_age = int((re.search(r'\d+', eligibility.get('minimumAge', '0 Years')) or type('', (), {'group': lambda s, x: '0'})()).group(0))
     max_age = 150
     max_age_str = eligibility.get('maximumAge')
     if max_age_str:
