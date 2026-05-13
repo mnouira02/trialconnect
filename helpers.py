@@ -1,109 +1,250 @@
 import datetime
-import sqlite3, os, re, math
+import os, re, math
 from werkzeug.security import generate_password_hash
 from flask import g
 import secrets, requests, warnings
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'trialconnect', 'data', 'trial_connect.db')
+from pymongo import MongoClient, ASCENDING, TEXT
+from pymongo.errors import DuplicateKeyError
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
-def get_db():
-    if 'db' not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
-    return g.db
+
+# =============================================================================
+# MongoDB — single shared client per app context
+# =============================================================================
+
+def get_mongo_db():
+    if 'mongo_db' not in g:
+        from flask import current_app
+        uri = current_app.config.get('MONGODB_URI') or os.environ.get('MONGODB_URI')
+        if not uri:
+            raise RuntimeError("MONGODB_URI is not set in environment variables.")
+        client = MongoClient(uri)
+        g.mongo_client = client
+        g.mongo_db = client['trialconnect']
+    return g.mongo_db
+
 
 def close_db(e=None):
-    db = g.pop('db', None)
-    if db is not None:
-        db.close()
+    client = g.pop('mongo_client', None)
+    if client is not None:
+        client.close()
+
 
 def init_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    db = sqlite3.connect(DB_PATH)
-    cursor = db.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS contacts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            firstName TEXT NOT NULL, lastName TEXT NOT NULL,
-            email TEXT NOT NULL, message TEXT NOT NULL
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL UNIQUE, firstName TEXT NOT NULL, lastName TEXT NOT NULL,
-            birthYear INTEGER, sex TEXT, password_hash TEXT, auth_provider TEXT NOT NULL,
-            provider_id TEXT, profile_picture_url TEXT, remember_token TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            reset_token TEXT, reset_token_expiration TIMESTAMP
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS promoted_studies (
-            nct_id TEXT PRIMARY KEY NOT NULL,
-            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS promotion_analytics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nct_id TEXT NOT NULL, search_term TEXT NOT NULL,
-            view_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    db.commit()
-    db.close()
-    print("Database initialized successfully.")
+    """Create MongoDB indexes on startup (idempotent)."""
+    try:
+        db = _get_db_direct()
+        # users
+        db['users'].create_index('email', unique=True)
+        db['users'].create_index('remember_token')
+        # contacts
+        db['contacts'].create_index([('created_at', ASCENDING)])
+        # promoted_studies
+        db['promoted_studies'].create_index('nct_id', unique=True)
+        # promotion_analytics
+        db['promotion_analytics'].create_index('nct_id')
+        # trials — text + vector (vector index managed via Atlas UI)
+        db['trials'].create_index([('brief_title', TEXT), ('conditions_str', TEXT)])
+        print("MongoDB indexes initialized successfully.")
+    except Exception as e:
+        print(f"MongoDB index init warning: {e}")
+
+
+def _get_db_direct():
+    """Direct connection outside Flask app context (used by init_db at startup)."""
+    uri = os.environ.get('MONGODB_URI')
+    if not uri:
+        raise RuntimeError("MONGODB_URI is not set.")
+    client = MongoClient(uri)
+    return client['trialconnect']
+
+
+# =============================================================================
+# Contacts
+# =============================================================================
 
 def add_contact_message(firstName, lastName, email, message):
-    db = get_db()
-    db.execute("INSERT INTO contacts (firstName, lastName, email, message) VALUES (?, ?, ?, ?)",
-               (firstName, lastName, email, message))
-    db.commit()
+    db = get_mongo_db()
+    db['contacts'].insert_one({
+        'firstName': firstName,
+        'lastName': lastName,
+        'email': email,
+        'message': message,
+        'created_at': datetime.datetime.utcnow()
+    })
+
+
+# =============================================================================
+# Users
+# =============================================================================
+
+def _user_doc_to_dict(doc):
+    if doc is None:
+        return None
+    d = dict(doc)
+    d['id'] = str(d.pop('_id'))
+    return d
+
 
 def get_or_create_user(email, firstName, lastName, birthYear=None, sex=None,
-                       auth_provider='local', profile_picture_url=None, provider_id=None, password=None):
-    db = get_db()
-    user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    if user:
-        return dict(user)
+                       auth_provider='local', profile_picture_url=None,
+                       provider_id=None, password=None):
+    db = get_mongo_db()
+    existing = db['users'].find_one({'email': email})
+    if existing:
+        return _user_doc_to_dict(existing)
     password_hash = generate_password_hash(password) if password else None
     remember_token = secrets.token_hex(16)
-    cursor = db.execute(
-        "INSERT INTO users (email, firstName, lastName, birthYear, sex, password_hash, auth_provider, provider_id, profile_picture_url, remember_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (email, firstName, lastName, birthYear, sex, password_hash, auth_provider, provider_id, profile_picture_url, remember_token)
-    )
-    db.commit()
-    return dict(db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone())
+    doc = {
+        'email': email,
+        'firstName': firstName,
+        'lastName': lastName,
+        'birthYear': birthYear,
+        'sex': sex,
+        'password_hash': password_hash,
+        'auth_provider': auth_provider,
+        'provider_id': provider_id,
+        'profile_picture_url': profile_picture_url,
+        'remember_token': remember_token,
+        'created_at': datetime.datetime.utcnow(),
+        'reset_token': None,
+        'reset_token_expiration': None
+    }
+    result = db['users'].insert_one(doc)
+    created = db['users'].find_one({'_id': result.inserted_id})
+    return _user_doc_to_dict(created)
+
 
 def get_user_by_email(email):
-    db = get_db()
-    user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    return dict(user) if user else None
+    db = get_mongo_db()
+    return _user_doc_to_dict(db['users'].find_one({'email': email}))
+
 
 def get_user_by_remember_token(token):
-    db = get_db()
-    user = db.execute("SELECT * FROM users WHERE remember_token = ?", (token,)).fetchone()
-    return dict(user) if user else None
+    db = get_mongo_db()
+    return _user_doc_to_dict(db['users'].find_one({'remember_token': token}))
+
+
+def get_user_by_id(user_id):
+    db = get_mongo_db()
+    from bson import ObjectId
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        return None
+    return _user_doc_to_dict(db['users'].find_one({'_id': oid}))
+
 
 def validate_password_strength(password):
     errors = []
-    if len(password) < 8: errors.append("Password must be at least 8 characters long.")
-    if not re.search(r"[A-Z]", password): errors.append("Password must contain at least one uppercase letter.")
-    if not re.search(r"[a-z]", password): errors.append("Password must contain at least one lowercase letter.")
-    if not re.search(r"[0-9]", password): errors.append("Password must contain at least one number.")
+    if len(password) < 8:
+        errors.append("Password must be at least 8 characters long.")
+    if not re.search(r"[A-Z]", password):
+        errors.append("Password must contain at least one uppercase letter.")
+    if not re.search(r"[a-z]", password):
+        errors.append("Password must contain at least one lowercase letter.")
+    if not re.search(r"[0-9]", password):
+        errors.append("Password must contain at least one number.")
     return errors
+
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def get_user_by_id(user_id):
-    db = get_db()
-    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    return dict(user) if user else None
+
+# =============================================================================
+# Promoted Studies
+# =============================================================================
+
+def get_all_promoted_studies():
+    db = get_mongo_db()
+    docs = list(db['promoted_studies'].find({}, {'_id': 0}).sort('added_at', -1))
+    # Normalise key name to match admin template expectations
+    for d in docs:
+        if 'nct_id' in d and 'nct_id' not in d:
+            d['nct_id'] = d['nct_id']
+    return docs
+
+
+def get_all_promoted_studies_set():
+    db = get_mongo_db()
+    return {doc['nct_id'] for doc in db['promoted_studies'].find({}, {'nct_id': 1, '_id': 0})}
+
+
+def add_promoted_study(nct_id):
+    db = get_mongo_db()
+    try:
+        db['promoted_studies'].insert_one({
+            'nct_id': nct_id.strip().upper(),
+            'added_at': datetime.datetime.utcnow()
+        })
+    except DuplicateKeyError:
+        pass
+
+
+def remove_promoted_study(nct_id):
+    db = get_mongo_db()
+    db['promoted_studies'].delete_one({'nct_id': nct_id})
+
+
+def log_promotion_analytic(nct_id, search_term):
+    db = get_mongo_db()
+    db['promotion_analytics'].insert_one({
+        'nct_id': nct_id,
+        'search_term': search_term,
+        'view_date': datetime.datetime.utcnow()
+    })
+
+
+# =============================================================================
+# Geolocation & Scoring
+# =============================================================================
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+
+def get_location_from_ip(ip_address):
+    if ip_address == '127.0.0.1':
+        ip_address = '8.8.8.8'
+    try:
+        response = requests.get(f"http://ip-api.com/json/{ip_address}?fields=status,lat,lon")
+        response.raise_for_status()
+        data = response.json()
+        if data.get('status') == 'success':
+            return data.get('lat'), data.get('lon')
+    except requests.exceptions.RequestException:
+        return None, None
+    return None, None
+
+
+def score_trial(trial, patient_profile):
+    vector_score = float(trial.get("vector_score", 0.5))
+    distance_score = 0.5
+    try:
+        user_lat = patient_profile["location"]["lat"]
+        user_lon = patient_profile["location"]["lon"]
+        distances = [
+            haversine(user_lat, user_lon, loc["lat"], loc["lon"])
+            for loc in trial.get("locations", [])
+            if loc.get("lat") and loc.get("lon")
+        ]
+        if distances:
+            distance_score = math.exp(-min(distances) / 300)
+    except (KeyError, TypeError):
+        pass
+    return round((0.70 * vector_score) + (0.30 * distance_score), 4)
+
+
+# =============================================================================
+# ClinicalTrials.gov API (fallback)
+# =============================================================================
 
 def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
     base_url = "https://clinicaltrials.gov/api/v2/studies"
@@ -135,8 +276,7 @@ def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
             status_module = protocol.get("statusModule", {})
             conditions_module = protocol.get("conditionsModule", {})
             locations_list = []
-            api_locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
-            for loc in api_locations:
+            for loc in protocol.get("contactsLocationsModule", {}).get("locations", []):
                 location_data = {k: loc.get(k) for k in ["facility","city","state","zip","country","geoPoint"]}
                 locations_list.append({k: v for k, v in location_data.items() if v is not None})
             formatted_trials.append({
@@ -148,125 +288,19 @@ def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
             })
     return formatted_trials
 
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-def get_location_from_ip(ip_address):
-    if ip_address == '127.0.0.1':
-        ip_address = '8.8.8.8'
-    try:
-        response = requests.get(f"http://ip-api.com/json/{ip_address}?fields=status,lat,lon")
-        response.raise_for_status()
-        data = response.json()
-        if data.get('status') == 'success':
-            return data.get('lat'), data.get('lon')
-    except requests.exceptions.RequestException:
-        return None, None
-    return None, None
-
-def get_all_promoted_studies():
-    db = get_db()
-    return [dict(s) for s in db.execute("SELECT * FROM promoted_studies ORDER BY added_at DESC").fetchall()]
-
-def get_all_promoted_studies_set():
-    db = get_db()
-    return {item[0] for item in db.execute("SELECT nct_id FROM promoted_studies").fetchall()}
-
-def add_promoted_study(nct_id):
-    db = get_db()
-    try:
-        db.execute("INSERT INTO promoted_studies (nct_id) VALUES (?)", (nct_id.strip().upper(),))
-        db.commit()
-    except sqlite3.IntegrityError:
-        pass
-
-def remove_promoted_study(nct_id):
-    db = get_db()
-    db.execute("DELETE FROM promoted_studies WHERE nct_id = ?", (nct_id,))
-    db.commit()
-
-def log_promotion_analytic(nct_id, search_term):
-    db = get_db()
-    db.execute("INSERT INTO promotion_analytics (nct_id, search_term) VALUES (?, ?)", (nct_id, search_term))
-    db.commit()
-
-def check_user_study_match(user_profile, nct_id):
-    if not user_profile or not user_profile.get('birthYear') or not user_profile.get('sex'):
-        return {'status': 'NO_DATA', 'reason': 'User profile incomplete.'}
-    try:
-        current_year = datetime.datetime.now().year
-        user_age = current_year - int(user_profile['birthYear'])
-        user_sex = user_profile['sex'].upper()
-    except (TypeError, ValueError):
-        return {'status': 'NO_DATA', 'reason': 'Invalid user profile data.'}
-    try:
-        url = f"https://clinicaltrials.gov/api/v2/studies/{nct_id}?fields=EligibilityModule"
-        warnings.filterwarnings('ignore', message='Unverified HTTPS request')
-        response = requests.get(url, timeout=5, verify=False)
-        response.raise_for_status()
-        eligibility = response.json().get("protocolSection", {}).get("eligibilityModule", {})
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to fetch eligibility for {nct_id}: {e}")
-        return {'status': 'NO_DATA', 'reason': 'API fetch failed.'}
-    if not eligibility:
-        return {'status': 'NO_DATA', 'reason': 'No eligibility data available.'}
-    study_sex = eligibility.get('sex', 'ALL').upper()
-    is_sex_match = study_sex == 'ALL' or study_sex == user_sex
-    min_age = int((re.search(r'\d+', eligibility.get('minimumAge','0 Years')) or type('',(),{'group':lambda s,x:'0'})()).group(0))
-    max_age = 150
-    max_age_str = eligibility.get('maximumAge')
-    if max_age_str:
-        m = re.search(r'\d+', max_age_str)
-        if m: max_age = int(m.group(0))
-    is_age_match = min_age <= user_age <= max_age
-    if is_age_match and is_sex_match:
-        return {'status': 'MATCH', 'verdict': 'MATCH',
-                'reason': f'Age ({user_age}) and sex ({user_sex}) match study criteria.'}
-    reason = ""
-    if not is_age_match: reason += f"Age ({user_age}) outside range ({min_age}-{max_age}). "
-    if not is_sex_match: reason += f"Sex ({user_sex}) does not match study requirement ({study_sex})."
-    return {'status': 'NO_MATCH', 'verdict': 'NO_MATCH', 'reason': reason.strip()}
-
 
 # =============================================================================
-# HACKATHON ADDITIONS: MongoDB Atlas + Gemini AI
+# MongoDB Atlas Trial Search
 # =============================================================================
-
-def get_mongo_db():
-    if 'mongo_db' not in g:
-        from pymongo import MongoClient
-        from flask import current_app
-        uri = current_app.config.get('MONGODB_URI') or os.environ.get('MONGODB_URI')
-        if not uri:
-            raise RuntimeError("MONGODB_URI is not set in environment variables.")
-        client = MongoClient(uri)
-        g.mongo_client = client
-        g.mongo_db = client['trialconnect']
-    return g.mongo_db
-
 
 def get_text_embedding(text):
-    """
-    Generates a text embedding using the new google-genai SDK.
-    Falls back gracefully if GOOGLE_CLOUD_PROJECT is not set.
-    Uses 'text-embedding-005' which is GA on Vertex AI.
-    """
     project = os.environ.get('GOOGLE_CLOUD_PROJECT')
     if not project:
         return None
     try:
         from google import genai
         from google.genai import types
-        client = genai.Client(
-            vertexai=True,
-            project=project,
-            location='global'
-        )
+        client = genai.Client(vertexai=True, project=project, location='global')
         result = client.models.embed_content(
             model='text-embedding-005',
             contents=text,
@@ -315,24 +349,6 @@ def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
         return search_clinical_trials(query, user_lat, user_lon, radius_km)
 
 
-def score_trial(trial, patient_profile):
-    vector_score = float(trial.get("vector_score", 0.5))
-    distance_score = 0.5
-    try:
-        user_lat = patient_profile["location"]["lat"]
-        user_lon = patient_profile["location"]["lon"]
-        distances = [
-            haversine(user_lat, user_lon, loc["lat"], loc["lon"])
-            for loc in trial.get("locations", [])
-            if loc.get("lat") and loc.get("lon")
-        ]
-        if distances:
-            distance_score = math.exp(-min(distances) / 300)
-    except (KeyError, TypeError):
-        pass
-    return round((0.70 * vector_score) + (0.30 * distance_score), 4)
-
-
 def fetch_trial_eligibility_text(nct_id):
     mongo_uri = os.environ.get('MONGODB_URI')
     if mongo_uri:
@@ -354,6 +370,55 @@ def fetch_trial_eligibility_text(nct_id):
         print(f"CT.gov eligibility fetch failed for {nct_id}: {e}")
         return None
 
+
+# =============================================================================
+# Eligibility Matching
+# =============================================================================
+
+def check_user_study_match(user_profile, nct_id):
+    if not user_profile or not user_profile.get('birthYear') or not user_profile.get('sex'):
+        return {'status': 'NO_DATA', 'reason': 'User profile incomplete.'}
+    try:
+        current_year = datetime.datetime.now().year
+        user_age = current_year - int(user_profile['birthYear'])
+        user_sex = user_profile['sex'].upper()
+    except (TypeError, ValueError):
+        return {'status': 'NO_DATA', 'reason': 'Invalid user profile data.'}
+    try:
+        url = f"https://clinicaltrials.gov/api/v2/studies/{nct_id}?fields=EligibilityModule"
+        warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+        response = requests.get(url, timeout=5, verify=False)
+        response.raise_for_status()
+        eligibility = response.json().get("protocolSection", {}).get("eligibilityModule", {})
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to fetch eligibility for {nct_id}: {e}")
+        return {'status': 'NO_DATA', 'reason': 'API fetch failed.'}
+    if not eligibility:
+        return {'status': 'NO_DATA', 'reason': 'No eligibility data available.'}
+    study_sex = eligibility.get('sex', 'ALL').upper()
+    is_sex_match = study_sex == 'ALL' or study_sex == user_sex
+    min_age = int((re.search(r'\d+', eligibility.get('minimumAge','0 Years')) or type('',(),{'group':lambda s,x:'0'})()).group(0))
+    max_age = 150
+    max_age_str = eligibility.get('maximumAge')
+    if max_age_str:
+        m = re.search(r'\d+', max_age_str)
+        if m:
+            max_age = int(m.group(0))
+    is_age_match = min_age <= user_age <= max_age
+    if is_age_match and is_sex_match:
+        return {'status': 'MATCH', 'verdict': 'MATCH',
+                'reason': f'Age ({user_age}) and sex ({user_sex}) match study criteria.'}
+    reason = ""
+    if not is_age_match:
+        reason += f"Age ({user_age}) outside range ({min_age}-{max_age}). "
+    if not is_sex_match:
+        reason += f"Sex ({user_sex}) does not match study requirement ({study_sex})."
+    return {'status': 'NO_MATCH', 'verdict': 'NO_MATCH', 'reason': reason.strip()}
+
+
+# =============================================================================
+# Gemini AI
+# =============================================================================
 
 def gemini_eligibility_check(patient_profile, eligibility_criteria_text, nct_id):
     import json
@@ -406,11 +471,6 @@ Respond ONLY with valid JSON:
 
 
 def extract_patient_profile_from_document(file_bytes, mime_type):
-    """
-    Uses Gemini 2.5 Flash multimodal via the new google-genai SDK to extract
-    a structured patient profile from a PDF/image medical document.
-    Forces response_mime_type=application/json to avoid markdown-wrapped output.
-    """
     import json
     project = os.environ.get('GOOGLE_CLOUD_PROJECT')
     if not project:
@@ -446,7 +506,6 @@ Return ONLY valid JSON:
             config=types.GenerateContentConfig(response_mime_type='application/json')
         )
         raw = response.text.strip()
-        # Belt-and-suspenders fence stripper
         if raw.startswith('```'):
             raw = re.sub(r'^```[a-z]*\n?', '', raw)
             raw = re.sub(r'\n?```$', '', raw.strip())
