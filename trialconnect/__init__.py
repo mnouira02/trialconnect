@@ -14,7 +14,9 @@ def create_app():
     app = Flask(__name__)
 
     # --- Load all config from environment ---
-    app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24))
+    # FLASK_SECRET_KEY must be set as a fixed string in production (Cloud Run env var)
+    # Never rely on the urandom fallback in production — sessions will break on restart
+    app.secret_key = os.environ.get('FLASK_SECRET_KEY') or os.urandom(24)
     app.config['GOOGLE_MAPS_API_KEY'] = os.environ.get('GOOGLE_MAPS_API_KEY')
     app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID')
     app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET')
@@ -24,7 +26,7 @@ def create_app():
     app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'static', 'profile_pictures')
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-    # Initialize the database
+    # Initialize MongoDB indexes
     init_db()
 
     # Initialize OAuth providers
@@ -40,10 +42,9 @@ def create_app():
 
     @app.before_request
     def load_logged_in_user():
-        user_id = session.get('user_id')
+        # Restore session from remember_me cookie if not already logged in
         remember_token = request.cookies.get('remember_token')
-
-        if user_id is None and remember_token:
+        if not session.get('user') and remember_token:
             user = get_user_by_remember_token(remember_token)
             if user:
                 session['user'] = user
