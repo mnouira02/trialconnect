@@ -19,6 +19,12 @@ from helpers import (
 
 app = current_app
 
+# Agent Builder config — single source of truth for the chat agent
+AGENT_ID = 'agent_1778661948312'
+AGENT_LOCATION = 'us-central1'
+AGENT_PROJECT = 'trialconnect-app'
+
+
 # --- Page Routes ---
 @app.route('/')
 def index():
@@ -180,6 +186,8 @@ def api_check_match(nct_id):
 
 
 # --- AI Chat Agent Endpoint ---
+# Thin proxy to Agent Builder agent_1778661948312.
+# All instructions, tools, and model config live in Agent Builder — not here.
 @app.route('/api/agent_chat', methods=['POST'])
 def api_agent_chat():
     body = request.get_json(silent=True) or {}
@@ -189,53 +197,60 @@ def api_agent_chat():
     if not user_message:
         return jsonify({'reply': 'Please ask me a question.'}), 400
 
+    # Prepend trial context so the agent can answer questions grounded in what the user sees.
+    # The agent's own instructions + tools remain the single source of truth in Agent Builder.
+    full_message = user_message
     if context and context.get('trials'):
-        trials_lines = []
-        for t in context['trials']:
-            eligibility = t.get('eligibility_status', 'not checked')
-            reason = t.get('eligibility_reason', '')
-            reason_str = f" | Reason: {reason}" if reason else ""
-            trials_lines.append(
-                f"  #{t.get('rank')} [{t.get('nctId')}] {t.get('briefTitle')} "
-                f"| Status: {t.get('overallStatus')} "
-                f"| Distance: {t.get('closest_distance_km', '?')}km "
-                f"| Eligibility: {eligibility}{reason_str}"
-            )
-        system_context = (
-            f"The user is viewing TrialConnect search results.\n"
-            f"Search query: \"{context.get('query')}\"\n"
-            f"Location: {context.get('location')}\n"
-            f"Trials currently shown to the user:\n" + "\n".join(trials_lines) + "\n\n"
-            f"Answer the user's question based specifically on these trials. "
-            f"If asked why they are or aren't eligible for a specific trial, use the eligibility reason above. "
-            f"Be concise, empathetic, and helpful. "
-            f"Never provide medical advice. Always recommend consulting a doctor for treatment decisions."
+        trials_lines = [
+            f"#{t.get('rank')} [{t.get('nctId')}] {t.get('briefTitle')} "
+            f"| {t.get('overallStatus')} | {t.get('closest_distance_km', '?')}km "
+            f"| Eligibility: {t.get('eligibility_status', 'not checked')}"
+            + (f" — {t['eligibility_reason']}" if t.get('eligibility_reason') else "")
+            for t in context['trials']
+        ]
+        context_block = (
+            f"[Search context: query=\"{context.get('query')}\", "
+            f"location={context.get('location')}\n"
+            + "\n".join(trials_lines) + "]"
         )
-    else:
-        system_context = (
-            "You are a helpful clinical trial assistant for TrialConnect. "
-            "Help the user understand clinical trials, eligibility criteria, and how to use the platform. "
-            "Never provide medical advice. Always recommend consulting a doctor."
-        )
+        full_message = f"{context_block}\n\n{user_message}"
 
-    project = os.environ.get('GOOGLE_CLOUD_PROJECT') or current_app.config.get('GOOGLE_CLOUD_PROJECT')
-    if not project:
-        return jsonify({'reply': 'AI is not configured on this server.'}), 500
+    # Use a stable session ID per browser session so the agent maintains conversation history
+    agent_session_id = session.get('agent_session_id')
+    if not agent_session_id:
+        agent_session_id = str(uuid.uuid4())
+        session['agent_session_id'] = agent_session_id
+        session.modified = True
 
     try:
-        from google import genai
-        from google.genai import types
-        client = genai.Client(vertexai=True, project=project, location='global')
-        full_prompt = f"{system_context}\n\nUser: {user_message}\n\nAssistant:"
-        response = client.models.generate_content(
-            model='gemini-2.0-flash-001',
-            contents=full_prompt,
-            config=types.GenerateContentConfig(max_output_tokens=512)
+        import google.auth
+        import google.auth.transport.requests
+        creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+        creds.refresh(google.auth.transport.requests.Request())
+
+        agent_url = (
+            f"https://{AGENT_LOCATION}-dialogflow.googleapis.com/v3/"
+            f"projects/{AGENT_PROJECT}/locations/{AGENT_LOCATION}/"
+            f"agents/{AGENT_ID}/sessions/{agent_session_id}:detectIntent"
         )
-        return jsonify({'reply': response.text})
+        resp = requests.post(
+            agent_url,
+            headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"},
+            json={"queryInput": {"text": {"text": full_message}, "languageCode": "en"}},
+            timeout=30
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        # Extract the first text response from the agent
+        messages = result.get('queryResult', {}).get('responseMessages', [])
+        reply_text = next(
+            (m['text']['text'][0] for m in messages if m.get('text', {}).get('text')),
+            "I'm sorry, I couldn't generate a response. Please try again."
+        )
+        return jsonify({'reply': reply_text})
     except Exception as e:
         print(f"Agent chat error: {e}")
-        return jsonify({'reply': 'Sorry, I had trouble connecting to the AI. Please try again in a moment.'}), 500
+        return jsonify({'reply': 'Sorry, I had trouble connecting to the AI agent. Please try again in a moment.'}), 500
 
 
 # --- MCP Endpoint for Vertex AI Agent Builder ---
