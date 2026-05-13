@@ -1,6 +1,12 @@
+import os
 from google.adk.agents import LlmAgent
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
+
+# Tell ADK to use Vertex AI (uses gcloud ADC credentials) instead of Gemini API
+os.environ.setdefault('GOOGLE_GENAI_USE_VERTEXAI', 'true')
+os.environ.setdefault('GOOGLE_CLOUD_PROJECT', 'trialconnect-app')
+os.environ.setdefault('GOOGLE_CLOUD_LOCATION', 'us-central1')
 
 # Single source of truth for the TrialConnect agent.
 # Used by both Flask (routes.py) and Google Agent Builder studio.
