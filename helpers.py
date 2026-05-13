@@ -43,9 +43,7 @@ def init_db():
         db['contacts'].create_index([('created_at', ASCENDING)])
         db['promoted_studies'].create_index('nct_id', unique=True)
         db['promotion_analytics'].create_index('nct_id')
-        # patient_dossiers: one document per user, indexed on user_id
         db['patient_dossiers'].create_index('user_id', unique=True)
-        # Drop conflicting text index if it exists, then recreate cleanly
         existing_indexes = db['trials'].index_information()
         for idx_name in list(existing_indexes.keys()):
             if idx_name not in ('_id_',) and 'text' in str(existing_indexes[idx_name].get('key', {})):
@@ -55,8 +53,10 @@ def init_db():
                 except Exception:
                     pass
         db['trials'].create_index(
-            [('brief_title', TEXT), ('conditions_str', TEXT)],
-            name='trial_text_index'
+            [('brief_title', TEXT), ('conditions_str', TEXT), ('eligibility_criteria', TEXT)],
+            name='trial_text_index',
+            weights={'brief_title': 10, 'conditions_str': 8, 'eligibility_criteria': 2},
+            default_language='english'
         )
         print("MongoDB indexes initialized successfully.")
     except Exception as e:
@@ -278,10 +278,56 @@ def score_trial(trial, patient_profile):
 
 
 # =============================================================================
-# ClinicalTrials.gov API (fallback)
+# Search ranking boost — applied after vector search and text fallback
+# =============================================================================
+
+def _condition_boost(query, doc):
+    """Return a ranking boost score based on how well the query matches
+    the trial's title and condition fields (lexical, not semantic).
+
+    Boosts:
+      +1.0  — exact query phrase in title or conditions_str
+      +0.50 — all significant query tokens found in title or conditions_str
+      +0.25 — majority of significant query tokens found
+      +0.0  — no meaningful overlap
+
+    This ensures 'lung cancer' surfaces NSCLC/SCLC/lung adenocarcinoma
+    studies above generic oncology trials that happen to mention cancer.
+    """
+    if not query:
+        return 0.0
+    q = query.lower().strip()
+    # Haystack: only title + conditions (not full eligibility text — too noisy)
+    haystack = ' '.join([
+        str(doc.get('title', '')),
+        str(doc.get('conditions', ''))
+    ]).lower()
+
+    if q in haystack:
+        return 1.0
+
+    # Tokenise: only tokens >3 chars to skip stop words
+    tokens = [t for t in re.split(r'[\s,/\-]+', q) if len(t) > 3]
+    if not tokens:
+        return 0.0
+    matches = sum(1 for tok in tokens if tok in haystack)
+    ratio = matches / len(tokens)
+    if ratio >= 1.0:
+        return 0.50
+    if ratio >= 0.5:
+        return 0.25
+    return 0.0
+
+
+# =============================================================================
+# ClinicalTrials.gov API (fallback when MongoDB unavailable)
 # =============================================================================
 
 def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
+    """Fallback: search CT.gov directly.
+    Uses query.cond for condition-first precision, then retries with
+    query.term if no condition results are found.
+    """
     base_url = "https://clinicaltrials.gov/api/v2/studies"
     safe_unit = "mi" if str(unit).lower() == "mi" else "km"
     try:
@@ -289,44 +335,61 @@ def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
     except (ValueError, TypeError):
         safe_radius = 200
     geo_filter = f"distance({user_lat},{user_lon},{safe_radius}{safe_unit})"
+
+    def _fetch(search_params):
+        try:
+            response = requests.get(base_url, params=search_params, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"API request failed: {e}")
+            return {}
+
+    # Try condition-specific search first
     params = {
-        "query.term": query,
+        "query.cond": query,
         "filter.overallStatus": "RECRUITING,NOT_YET_RECRUITING,AVAILABLE",
         "filter.geo": geo_filter,
-        "pageSize": 1000,
+        "pageSize": 100,
         "format": "json"
     }
-    try:
-        response = requests.get(base_url, params=params)
-        response.raise_for_status()
-        data = response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"API request failed: {e}")
-        return []
+    data = _fetch(params)
+
+    # If no results, fall back to broad term search
+    if not data.get('studies'):
+        params_broad = dict(params)
+        params_broad.pop('query.cond')
+        params_broad['query.term'] = query
+        params_broad['pageSize'] = 100
+        data = _fetch(params_broad)
+
     formatted_trials = []
-    if "studies" in data:
-        for study in data["studies"]:
-            protocol = study.get("protocolSection", {})
-            id_module = protocol.get("identificationModule", {})
-            status_module = protocol.get("statusModule", {})
-            conditions_module = protocol.get("conditionsModule", {})
-            interventions_module = protocol.get("armsInterventionsModule", {})
-            locations_list = []
-            for loc in protocol.get("contactsLocationsModule", {}).get("locations", []):
-                location_data = {k: loc.get(k) for k in ["facility", "city", "state", "zip", "country", "geoPoint"]}
-                locations_list.append({k: v for k, v in location_data.items() if v is not None})
-            interventions_list = [
-                {'name': i.get('interventionName', ''), 'type': i.get('interventionType', '')}
-                for i in interventions_module.get('interventions', [])
-            ]
-            formatted_trials.append({
-                "nctId": id_module.get("nctId"),
-                "title": id_module.get("briefTitle"),
-                "status": status_module.get("overallStatus"),
-                "conditions": ", ".join(conditions_module.get("conditions", [])),
-                "interventions": interventions_list,
-                "locations": locations_list
-            })
+    for study in data.get('studies', []):
+        protocol = study.get("protocolSection", {})
+        id_module = protocol.get("identificationModule", {})
+        status_module = protocol.get("statusModule", {})
+        conditions_module = protocol.get("conditionsModule", {})
+        interventions_module = protocol.get("armsInterventionsModule", {})
+        locations_list = []
+        for loc in protocol.get("contactsLocationsModule", {}).get("locations", []):
+            location_data = {k: loc.get(k) for k in ["facility", "city", "state", "zip", "country", "geoPoint"]}
+            locations_list.append({k: v for k, v in location_data.items() if v is not None})
+        interventions_list = [
+            {'name': i.get('interventionName', ''), 'type': i.get('interventionType', '')}
+            for i in interventions_module.get('interventions', [])
+        ]
+        t = {
+            "nctId": id_module.get("nctId"),
+            "title": id_module.get("briefTitle"),
+            "status": status_module.get("overallStatus"),
+            "conditions": ", ".join(conditions_module.get("conditions", [])),
+            "interventions": interventions_list,
+            "locations": locations_list
+        }
+        t['score'] = _condition_boost(query, t)
+        formatted_trials.append(t)
+
+    formatted_trials.sort(key=lambda x: x.get('score', 0), reverse=True)
     return formatted_trials
 
 
@@ -335,6 +398,9 @@ def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
 # =============================================================================
 
 def get_text_embedding(text):
+    """Generate a query embedding using text-embedding-005.
+    MUST match the model used in seed_mongodb.py.
+    """
     project = os.environ.get('GOOGLE_CLOUD_PROJECT')
     if not project:
         return None
@@ -344,7 +410,7 @@ def get_text_embedding(text):
         client = genai.Client(vertexai=True, project=project, location='global')
         result = client.models.embed_content(
             model='text-embedding-005',
-            contents=text,
+            contents=text[:3072],
             config=types.EmbedContentConfig(task_type='RETRIEVAL_QUERY')
         )
         return result.embeddings[0].values
@@ -354,6 +420,21 @@ def get_text_embedding(text):
 
 
 def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
+    """Search trials in MongoDB Atlas.
+
+    Strategy (in order):
+    1. Vector search using text-embedding-005 (same model as seed).
+       Query vector = plain user query string (e.g. 'lung cancer').
+       The indexed documents embed title+conditions+eligibility, so
+       a query of 'lung cancer' will match documents where those fields
+       are about lung cancer.
+    2. After vector retrieval, apply a lexical condition boost:
+       trials whose title/conditions contain the query phrase get ranked up.
+       This fixes the problem where generic cancer studies rank above specific
+       lung cancer ones.
+    3. Fall back to MongoDB text search if no embedding available.
+    4. Fall back to CT.gov API if MongoDB unavailable.
+    """
     mongo_uri = os.environ.get('MONGODB_URI')
     if not mongo_uri:
         print("MONGODB_URI not set — falling back to ClinicalTrials.gov API")
@@ -368,7 +449,8 @@ def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
                     "index": "eligibility_vector_index",
                     "path": "eligibility_criteria_embedding",
                     "queryVector": query_embedding,
-                    "numCandidates": 200, "limit": 100
+                    "numCandidates": 300,
+                    "limit": 150
                 }},
                 {"$addFields": {"vector_score": {"$meta": "vectorSearchScore"}}},
                 {"$match": {"overall_status": {"$in": ["RECRUITING", "NOT_YET_RECRUITING", "AVAILABLE"]}}},
@@ -376,16 +458,41 @@ def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
                     "_id": 0, "nctId": "$nct_id", "title": "$brief_title",
                     "status": "$overall_status", "conditions": "$conditions_str",
                     "locations": "$locations", "eligibility_criteria": 1,
-                    "interventions": 1, "vector_score": 1
+                    "interventions": 1, "vector_score": 1, "seed_conditions": 1
                 }}
             ]
-            return list(collection.aggregate(pipeline))
+            results = list(collection.aggregate(pipeline))
+
+            # Apply lexical condition boost on top of vector score
+            for doc in results:
+                base = float(doc.get('vector_score', 0))
+                boost = _condition_boost(query, doc)
+                doc['vector_score'] = base + boost
+
+            results.sort(key=lambda x: x.get('vector_score', 0), reverse=True)
+            return results
+
         else:
-            return list(collection.find(
-                {"$text": {"$search": query}, "overall_status": {"$in": ["RECRUITING", "NOT_YET_RECRUITING", "AVAILABLE"]}},
-                {"_id": 0, "nctId": "$nct_id", "title": "$brief_title", "status": "$overall_status",
-                 "conditions": "$conditions_str", "locations": 1, "eligibility_criteria": 1, "interventions": 1}
-            ).limit(100))
+            # Text search fallback (weighted: title > conditions > eligibility)
+            results = list(collection.find(
+                {
+                    "$text": {"$search": query},
+                    "overall_status": {"$in": ["RECRUITING", "NOT_YET_RECRUITING", "AVAILABLE"]}
+                },
+                {
+                    "_id": 0, "nctId": "$nct_id", "title": "$brief_title",
+                    "status": "$overall_status", "conditions": "$conditions_str",
+                    "locations": 1, "eligibility_criteria": 1, "interventions": 1,
+                    "text_score": {"$meta": "textScore"}
+                }
+            ).sort([("text_score", {"$meta": "textScore"})]).limit(100))
+
+            for doc in results:
+                doc['vector_score'] = float(doc.get('text_score', 0)) + _condition_boost(query, doc)
+
+            results.sort(key=lambda x: x.get('vector_score', 0), reverse=True)
+            return results
+
     except Exception as e:
         print(f"MongoDB search failed: {e} — falling back to ClinicalTrials.gov API")
         return search_clinical_trials(query, user_lat, user_lon, radius_km)
@@ -521,24 +628,27 @@ def extract_patient_profile_from_document(file_bytes, mime_type):
         client = genai.Client(vertexai=True, project=project, location='global')
         document_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
         prompt = """Extract structured medical information from this document.
+Normalise all lab values to standard SI units during extraction.
+Infer sex from patient name if not explicitly stated.
 Return ONLY valid JSON:
 {
-  "diagnosis": ["<condition>"],
+  "diagnosis": ["<primary condition>"],
   "age": null,
   "sex": null,
   "prior_treatments": ["<drug or therapy>"],
   "labs": {
     "ECOG_status": null,
+    "hemoglobin_g_dL": null,
+    "WBC_10e9_L": null,
+    "platelets_10e9_L": null,
     "creatinine_umol_L": null,
     "ALT_U_L": null,
-    "hemoglobin_g_dL": null,
-    "platelets_10e9_L": null,
-    "WBC_10e9_L": null
+    "eGFR_mL_min": null
   },
   "comorbidities": [],
   "current_medications": [],
   "extraction_confidence": <integer 0-100>,
-  "notes": "<anything ambiguous>"
+  "notes": "<anything ambiguous or converted>"
 }"""
         response = client.models.generate_content(
             model='gemini-2.5-flash',
