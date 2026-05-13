@@ -258,6 +258,131 @@ def api_check_match(nct_id):
         return jsonify({"error": "Match check failed."}), 500
 
 
+# --- MCP Endpoint for Vertex AI Agent Builder ---
+@app.route('/mcp', methods=['POST'])
+def mcp_handler():
+    """
+    MCP (Model Context Protocol) endpoint for Vertex AI Agent Builder.
+    Handles tool calls: search_trials and check_eligibility.
+    """
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({"error": "Invalid request body"}), 400
+
+    tool_name = body.get('tool')
+    params = body.get('parameters', {})
+
+    # --- Tool: search_trials ---
+    if tool_name == 'search_trials':
+        condition = params.get('condition', '')
+        location = params.get('location', '')
+        lat = params.get('lat')
+        lon = params.get('lon')
+
+        # If lat/lon not provided, geocode location using a simple lookup
+        if not lat or not lon:
+            try:
+                maps_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
+                geo_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={requests.utils.quote(location)}&key={maps_key}"
+                geo_resp = requests.get(geo_url, timeout=5).json()
+                if geo_resp.get('results'):
+                    loc = geo_resp['results'][0]['geometry']['location']
+                    lat = loc['lat']
+                    lon = loc['lng']
+                else:
+                    return jsonify({"error": f"Could not geocode location: {location}"}), 400
+            except Exception as e:
+                return jsonify({"error": f"Geocoding failed: {str(e)}"}), 500
+
+        try:
+            raw_results = search_trials_mongo(condition, lat, lon, radius_km=300)
+            output = []
+            for study in raw_results[:5]:  # Return top 5 to keep response concise
+                min_distance = float('inf')
+                for loc in study.get('locations', []):
+                    geo = loc.get('geoPoint') or loc
+                    slat = geo.get('lat')
+                    slon = geo.get('lon')
+                    if slat and slon:
+                        dist = haversine(lat, lon, slat, slon)
+                        if dist < min_distance:
+                            min_distance = dist
+                output.append({
+                    "nctId": study.get('nctId'),
+                    "title": study.get('briefTitle'),
+                    "status": study.get('overallStatus'),
+                    "conditions": study.get('conditions', []),
+                    "interventions": [i.get('name', '') for i in study.get('interventions', [])][:3],
+                    "closest_site_km": round(min_distance) if min_distance != float('inf') else None,
+                    "url": f"https://clinicaltrials.gov/study/{study.get('nctId')}"
+                })
+            return jsonify({"trials": output, "count": len(output)})
+        except Exception as e:
+            return jsonify({"error": f"Search failed: {str(e)}"}), 500
+
+    # --- Tool: check_eligibility ---
+    elif tool_name == 'check_eligibility':
+        nct_id = params.get('nct_id')
+        age = params.get('age')
+        sex = params.get('sex', '').upper()
+        diagnosis = params.get('diagnosis', '')
+        prior_treatments = params.get('prior_treatments', '')
+        comorbidities = params.get('comorbidities', '')
+
+        if not nct_id:
+            return jsonify({"error": "nct_id is required"}), 400
+
+        patient_profile = {
+            "age": age,
+            "sex": sex,
+            "diagnosis": diagnosis,
+            "prior_treatments": prior_treatments,
+            "comorbidities": comorbidities
+        }
+        patient_profile = {k: v for k, v in patient_profile.items() if v}
+
+        try:
+            eligibility_text = fetch_trial_eligibility_text(nct_id)
+            if not eligibility_text:
+                return jsonify({"status": "NO_DATA", "reason": "No eligibility criteria found for this trial."})
+            result = gemini_eligibility_check(patient_profile, eligibility_text, nct_id)
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": f"Eligibility check failed: {str(e)}"}), 500
+
+    # --- Tool: list_tools (MCP discovery) ---
+    elif tool_name == 'list_tools' or tool_name is None:
+        return jsonify({
+            "tools": [
+                {
+                    "name": "search_trials",
+                    "description": "Search for clinical trials by medical condition and patient location. Returns top matching trials with distance to nearest site.",
+                    "parameters": {
+                        "condition": {"type": "string", "description": "Medical condition (e.g. lung cancer, type 2 diabetes)", "required": True},
+                        "location": {"type": "string", "description": "City, state or country (e.g. Chicago, IL)", "required": True},
+                        "lat": {"type": "number", "description": "Latitude (optional, overrides location string)"},
+                        "lon": {"type": "number", "description": "Longitude (optional, overrides location string)"}
+                    }
+                },
+                {
+                    "name": "check_eligibility",
+                    "description": "Check whether a patient is likely eligible for a specific clinical trial using Gemini AI.",
+                    "parameters": {
+                        "nct_id": {"type": "string", "description": "ClinicalTrials.gov NCT ID (e.g. NCT04567890)", "required": True},
+                        "age": {"type": "integer", "description": "Patient age in years"},
+                        "sex": {"type": "string", "description": "MALE or FEMALE"},
+                        "diagnosis": {"type": "string", "description": "Primary diagnosis"},
+                        "prior_treatments": {"type": "string", "description": "Previous treatments received"},
+                        "comorbidities": {"type": "string", "description": "Other medical conditions"}
+                    }
+                }
+            ]
+        })
+
+    else:
+        return jsonify({"error": f"Unknown tool: {tool_name}"}), 404
+
+
 # --- Static Page Routes ---
 @app.route('/about')
 def about():
