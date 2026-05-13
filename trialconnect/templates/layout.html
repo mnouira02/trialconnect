@@ -14,6 +14,126 @@
     <link href="{{ url_for('static', filename='css/styles.css') }}" rel="stylesheet" />
     
     {% block head_links %}{% endblock %}
+
+    <style>
+        /* ── TrialConnect AI Chat Widget ── */
+        #tc-chat-btn {
+            position: fixed;
+            bottom: 28px;
+            right: 28px;
+            z-index: 1050;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #0d6efd, #6610f2);
+            color: #fff;
+            border: none;
+            box-shadow: 0 4px 18px rgba(13,110,253,.45);
+            font-size: 1.5rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform .2s;
+        }
+        #tc-chat-btn:hover { transform: scale(1.1); }
+        #tc-chat-btn .tc-badge {
+            position: absolute;
+            top: 2px; right: 2px;
+            background: #dc3545;
+            color: #fff;
+            border-radius: 50%;
+            width: 16px; height: 16px;
+            font-size: .6rem;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #tc-chat-panel {
+            position: fixed;
+            bottom: 96px;
+            right: 28px;
+            z-index: 1049;
+            width: 370px;
+            max-height: 540px;
+            border-radius: 16px;
+            box-shadow: 0 8px 40px rgba(0,0,0,.18);
+            background: #fff;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            font-family: inherit;
+        }
+        #tc-chat-panel.open { display: flex; }
+        .tc-chat-header {
+            background: linear-gradient(135deg, #0d6efd, #6610f2);
+            color: #fff;
+            padding: 14px 16px;
+            font-weight: 600;
+            font-size: .95rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .tc-chat-header span { opacity: .75; font-size: .75rem; font-weight: 400; }
+        .tc-chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: #f8f9fa;
+        }
+        .tc-msg {
+            max-width: 85%;
+            padding: 9px 13px;
+            border-radius: 12px;
+            font-size: .875rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+        }
+        .tc-msg.bot {
+            background: #fff;
+            border: 1px solid #dee2e6;
+            align-self: flex-start;
+            border-bottom-left-radius: 3px;
+        }
+        .tc-msg.user {
+            background: #0d6efd;
+            color: #fff;
+            align-self: flex-end;
+            border-bottom-right-radius: 3px;
+        }
+        .tc-msg.typing { color: #aaa; font-style: italic; }
+        .tc-chat-input-row {
+            display: flex;
+            padding: 10px;
+            border-top: 1px solid #dee2e6;
+            background: #fff;
+            gap: 8px;
+        }
+        .tc-chat-input-row input {
+            flex: 1;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: .875rem;
+            outline: none;
+        }
+        .tc-chat-input-row input:focus { border-color: #0d6efd; }
+        .tc-chat-input-row button {
+            background: #0d6efd;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 14px;
+            cursor: pointer;
+            font-size: .875rem;
+        }
+        .tc-chat-input-row button:hover { background: #0b5ed7; }
+        @media (max-width: 480px) {
+            #tc-chat-panel { width: calc(100vw - 32px); right: 16px; }
+        }
+    </style>
 </head>
 <body class="d-flex flex-column h-100">
     <main class="flex-shrink-0">
@@ -39,33 +159,26 @@
                             <!-- User Profile Dropdown -->
                             <div class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle text-white d-flex align-items-center" href="#" id="navbarDropdownUser" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                    <!-- Conditional Profile Picture -->
                                     {% if session.user.profile_picture_url %}
                                         <img src="{{ session.user.profile_picture_url }}" alt="{{ session.user.firstName }}'s profile picture" class="rounded-circle me-2" height="30" />
                                     {% else %}
-                                        <!-- Placeholder Icon -->
                                         <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" fill="currentColor" class="bi bi-person-circle text-white me-2" viewBox="0 0 16 16">
                                             <path d="M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/>
                                             <path fill-rule="evenodd" d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1z"/>
                                         </svg>
                                     {% endif %}
-                                    
                                     {{ session.user.firstName }}
                                 </a>
                                 <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdownUser">
                                     <li><a class="dropdown-item" href="{{ url_for('profile') }}">Profile</a></li>
-                                    
-                                    <!-- Admin link inside dropdown -->
                                     {% if session.user.email == 'frenchieeap@gmail.com' %}
                                         <li><a class="dropdown-item" href="{{ url_for('admin') }}">Admin</a></li>
                                     {% endif %}
-                                    
                                     <li><hr class="dropdown-divider"></li>
                                     <li><a class="dropdown-item" href="{{ url_for('logout') }}">Logout</a></li>
                                 </ul>
                             </div>
                         {% else %}
-                            <!-- Login/Register Buttons for logged-out users -->
                             <a class="btn btn-outline-light me-2" href="{{ url_for('login') }}">Log In</a>
                             <a class="btn btn-primary" href="{{ url_for('register') }}">Register</a>
                         {% endif %}
@@ -92,6 +205,7 @@
         {% block content %}{% endblock %}
 
     </main>
+
     <!-- Footer-->
     <footer class="bg-dark py-4 mt-auto">
         <div class="container px-5">
@@ -107,11 +221,35 @@
             </div>
         </div>
     </footer>
+
+    <!-- ── TrialConnect AI Chat Widget ── -->
+    <button id="tc-chat-btn" title="Ask our AI assistant">
+        <i class="bi bi-chat-dots-fill"></i>
+        <span class="tc-badge" id="tc-chat-badge" style="display:none">1</span>
+    </button>
+
+    <div id="tc-chat-panel">
+        <div class="tc-chat-header">
+            <div>
+                🧬 TrialConnect AI
+                <br><span>Powered by Gemini &amp; MongoDB</span>
+            </div>
+            <button onclick="tcToggleChat()" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;">&#x2715;</button>
+        </div>
+        <div class="tc-chat-messages" id="tc-chat-messages"></div>
+        <div class="tc-chat-input-row">
+            <input type="text" id="tc-chat-input" placeholder="Ask about your results..." autocomplete="off" />
+            <button onclick="tcSendMessage()"><i class="bi bi-send-fill"></i></button>
+        </div>
+    </div>
+
     <!-- Bootstrap core JS-->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
     <!-- Core theme JS-->
     <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
-    
+    <!-- TrialConnect Chat Agent -->
+    <script src="{{ url_for('static', filename='js/agent_chat.js') }}"></script>
+
     {% block scripts %}{% endblock %}
 </body>
 </html>
