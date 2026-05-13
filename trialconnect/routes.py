@@ -38,6 +38,109 @@ def index():
     )
 
 
+@app.route('/api/openapi.json')
+def openapi_spec():
+    """OpenAPI 3.0 spec for Agent Builder tool integration."""
+    spec = {
+        "openapi": "3.0.0",
+        "info": {
+            "title": "TrialConnect API",
+            "version": "1.0.0",
+            "description": "AI-powered clinical trial search and eligibility matching API."
+        },
+        "servers": [{"url": "https://trialconnect-404183020569.us-central1.run.app"}],
+        "paths": {
+            "/api/search": {
+                "get": {
+                    "operationId": "searchTrials",
+                    "summary": "Search for clinical trials by condition and location",
+                    "description": "Returns a ranked list of clinical trials matching the query, sorted by AI relevance score and proximity to the user.",
+                    "parameters": [
+                        {
+                            "name": "query",
+                            "in": "query",
+                            "required": True,
+                            "schema": {"type": "string"},
+                            "description": "Medical condition or trial type to search for (e.g. 'breast cancer', 'type 2 diabetes')"
+                        },
+                        {
+                            "name": "lat",
+                            "in": "query",
+                            "required": True,
+                            "schema": {"type": "number"},
+                            "description": "Patient latitude coordinate"
+                        },
+                        {
+                            "name": "lon",
+                            "in": "query",
+                            "required": True,
+                            "schema": {"type": "number"},
+                            "description": "Patient longitude coordinate"
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "List of matching clinical trials ranked by relevance",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "nctId": {"type": "string", "description": "ClinicalTrials.gov identifier"},
+                                                "briefTitle": {"type": "string", "description": "Trial title"},
+                                                "overallStatus": {"type": "string", "description": "Recruiting status"},
+                                                "score": {"type": "number", "description": "AI relevance score"},
+                                                "closest_distance_km": {"type": "number", "description": "Distance to nearest trial site in km"},
+                                                "conditions": {"type": "array", "items": {"type": "string"}},
+                                                "interventions": {"type": "array", "items": {"type": "string"}}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/check_match/{nct_id}": {
+                "get": {
+                    "operationId": "checkTrialMatch",
+                    "summary": "Check if a patient matches a clinical trial's eligibility criteria",
+                    "description": "Uses Gemini AI to analyze trial eligibility criteria against a patient profile and returns a match status with reasoning.",
+                    "parameters": [
+                        {
+                            "name": "nct_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string"},
+                            "description": "The NCT ID of the clinical trial (e.g. NCT04567890)"
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Eligibility match result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "status": {"type": "string", "enum": ["LIKELY_ELIGIBLE", "LIKELY_INELIGIBLE", "UNCERTAIN", "NO_DATA"]},
+                                            "reason": {"type": "string", "description": "Explanation of the eligibility decision"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return jsonify(spec)
+
+
 @app.route('/api/search')
 def api_search():
     query = request.args.get('query')
@@ -457,7 +560,6 @@ def admin():
             except (ValueError, TypeError):
                 user['token_status'] = 'error'
         processed_users.append(user)
-    # Convert contact _id to string for template
     for c in contacts:
         c['id'] = str(c.pop('_id'))
     return render_template("admin.html", users=processed_users, contacts=contacts, promoted_list=promoted_list)
