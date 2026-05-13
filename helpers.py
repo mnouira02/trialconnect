@@ -167,9 +167,6 @@ def allowed_file(filename):
 def get_all_promoted_studies():
     db = get_mongo_db()
     docs = list(db['promoted_studies'].find({}, {'_id': 0}).sort('added_at', -1))
-    for d in docs:
-        if 'nct_id' in d and 'nct_id' not in d:
-            d['nct_id'] = d['nct_id']
     return docs
 
 
@@ -517,7 +514,7 @@ Return ONLY valid JSON:
             raw = re.sub(r'\n?```$', '', raw.strip())
         return json.loads(raw)
     except Exception as e:
-tml(f"Document extraction failed: {e}")
+        print(f"Document extraction failed: {e}")
         return {
             "error": str(e), "extraction_confidence": 0,
             "diagnosis": [], "prior_treatments": [], "labs": {}
