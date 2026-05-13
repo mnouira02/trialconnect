@@ -7,3 +7,4 @@ python-dotenv
 Werkzeug
 pymongo[srv]
 google-cloud-aiplatform
+google-adk

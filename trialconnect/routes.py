@@ -19,11 +19,6 @@ from helpers import (
 
 app = current_app
 
-# Agent Builder config — single source of truth for the chat agent
-AGENT_ID = 'agent_1778661948312'
-AGENT_LOCATION = 'us-central1'
-AGENT_PROJECT = 'trialconnect-app'
-
 
 # --- Page Routes ---
 @app.route('/')
@@ -186,8 +181,7 @@ def api_check_match(nct_id):
 
 
 # --- AI Chat Agent Endpoint ---
-# Thin proxy to Agent Builder agent_1778661948312.
-# All instructions, tools, and model config live in Agent Builder — not here.
+# Thin wrapper around agent.py — all agent logic lives there as single source of truth.
 @app.route('/api/agent_chat', methods=['POST'])
 def api_agent_chat():
     body = request.get_json(silent=True) or {}
@@ -197,8 +191,7 @@ def api_agent_chat():
     if not user_message:
         return jsonify({'reply': 'Please ask me a question.'}), 400
 
-    # Prepend trial context so the agent can answer questions grounded in what the user sees.
-    # The agent's own instructions + tools remain the single source of truth in Agent Builder.
+    # Prepend trial context so agent can answer grounded questions about what the user sees.
     full_message = user_message
     if context and context.get('trials'):
         trials_lines = [
@@ -215,7 +208,7 @@ def api_agent_chat():
         )
         full_message = f"{context_block}\n\n{user_message}"
 
-    # Use a stable session ID per browser session so the agent maintains conversation history
+    # Stable session ID per browser session for conversation memory
     agent_session_id = session.get('agent_session_id')
     if not agent_session_id:
         agent_session_id = str(uuid.uuid4())
@@ -223,31 +216,31 @@ def api_agent_chat():
         session.modified = True
 
     try:
-        import google.auth
-        import google.auth.transport.requests
-        creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
-        creds.refresh(google.auth.transport.requests.Request())
+        from google.adk.runners import Runner
+        from google.adk.sessions import InMemorySessionService
+        from google.genai import types as gentypes
+        from agent import root_agent
 
-        agent_url = (
-            f"https://{AGENT_LOCATION}-dialogflow.googleapis.com/v3/"
-            f"projects/{AGENT_PROJECT}/locations/{AGENT_LOCATION}/"
-            f"agents/{AGENT_ID}/sessions/{agent_session_id}:detectIntent"
+        runner = Runner(
+            agent=root_agent,
+            app_name='trialconnect',
+            session_service=InMemorySessionService()
         )
-        resp = requests.post(
-            agent_url,
-            headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"},
-            json={"queryInput": {"text": {"text": full_message}, "languageCode": "en"}},
-            timeout=30
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        # Extract the first text response from the agent
-        messages = result.get('queryResult', {}).get('responseMessages', [])
-        reply_text = next(
-            (m['text']['text'][0] for m in messages if m.get('text', {}).get('text')),
-            "I'm sorry, I couldn't generate a response. Please try again."
-        )
-        return jsonify({'reply': reply_text})
+
+        reply = ''
+        for event in runner.run(
+            user_id='user',
+            session_id=agent_session_id,
+            new_message=gentypes.Content(
+                role='user',
+                parts=[gentypes.Part(text=full_message)]
+            )
+        ):
+            if event.is_final_response() and event.content:
+                reply = event.content.parts[0].text
+                break
+
+        return jsonify({'reply': reply or 'No response from agent.'})
     except Exception as e:
         print(f"Agent chat error: {e}")
         return jsonify({'reply': 'Sorry, I had trouble connecting to the AI agent. Please try again in a moment.'}), 500
@@ -578,7 +571,8 @@ def delete_account():
     if 'user' not in session:
         abort(403)
     user_id = session['user']['id']
-    email = session['user']['email']
+    email = session['user']['email'
+    ]
     if email == 'frenchieeap@gmail.com':
         flash("The primary admin account cannot be deleted.", "danger")
         return redirect(url_for('profile'))
