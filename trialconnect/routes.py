@@ -182,20 +182,13 @@ def api_check_match(nct_id):
 # --- AI Chat Agent Endpoint ---
 @app.route('/api/agent_chat', methods=['POST'])
 def api_agent_chat():
-    """
-    Receives a user message + current search context from the frontend chat widget.
-    Calls Gemini with the full trial context injected into the system prompt.
-    Returns a conversational answer grounded in what the user is actually seeing.
-    """
     body = request.get_json(silent=True) or {}
     user_message = body.get('message', '').strip()
-    context = body.get('context')  # { query, location, trials: [...] }
+    context = body.get('context')
 
     if not user_message:
         return jsonify({'reply': 'Please ask me a question.'}), 400
 
-    # Build system context from the trials the user is currently viewing
-    system_context = ""
     if context and context.get('trials'):
         trials_lines = []
         for t in context['trials']:
@@ -225,16 +218,20 @@ def api_agent_chat():
             "Never provide medical advice. Always recommend consulting a doctor."
         )
 
+    project = os.environ.get('GOOGLE_CLOUD_PROJECT') or current_app.config.get('GOOGLE_CLOUD_PROJECT')
+    if not project:
+        return jsonify({'reply': 'AI is not configured on this server.'}), 500
+
     try:
-        import vertexai
-        from vertexai.generative_models import GenerativeModel
-        vertexai.init(
-            project=current_app.config.get('GOOGLE_CLOUD_PROJECT', 'trialconnect-app'),
-            location='us-central1'
-        )
-        model = GenerativeModel("gemini-1.5-flash")
+        from google import genai
+        from google.genai import types
+        client = genai.Client(vertexai=True, project=project, location='global')
         full_prompt = f"{system_context}\n\nUser: {user_message}\n\nAssistant:"
-        response = model.generate_content(full_prompt)
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-001',
+            contents=full_prompt,
+            config=types.GenerateContentConfig(max_output_tokens=512)
+        )
         return jsonify({'reply': response.text})
     except Exception as e:
         print(f"Agent chat error: {e}")
