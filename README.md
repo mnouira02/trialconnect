@@ -1,71 +1,177 @@
-# TrialConnect
+# TrialConnect 🧬
 
-#### Video Demo: https://youtu.be/m08SbEcXtgQ
+**AI-powered clinical trial matching for patients who need it most.**
 
-#### Description
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Cloud%20Run-blue)](https://trialconnect-404183020569.us-central1.run.app)
+[![Built With](https://img.shields.io/badge/Built%20With-MongoDB%20%2B%20GCP-green)](https://github.com/mnouira02/trialconnect)
 
-TrialConnect is a Flask-based web application that helps people discover recruiting and not-yet-recruiting clinical trials near a chosen location, presenting results on an interactive map and ranking them by distance, promotion priority, and profile-based eligibility matching when a user is logged in. The backend integrates the ClinicalTrials.gov API to search studies, extracts sites with geocoordinates for mapping, and queries per-study eligibility to support a lightweight age/sex match indicator that can improve result ordering and explain “match/no match” outcomes. The application includes local authentication with secure password hashing, Google OAuth sign-in, an admin panel to manage users and promoted studies, and basic analytics that log when promoted studies are returned for specific search terms.
+> Built for the MongoDB + Google Cloud Hackathon 2025
 
-### Features
+---
 
-- Location-aware search for recruiting/not-yet-recruiting studies with a “search this area” interaction as the map is moved or zoomed.  
-- Structured ranking that boosts a curated list of promoted NCT IDs before sorting by distance; when logged in, adds an eligibility-based signal from age/sex checks. 
-- Study details sourced from API, including locations for hospital sites. 
-- Account system supporting local registration and Google sign-in, a profile page with birth year and sex, password change capabilities, a way for user to reset password with a One Time Passcode feature (accessible via admin page)
-- Admin views to list/delete users, manage promoted studies, and observe basic promotion analytics by search term and timestamp. The admin allows to check for contact forms and delete them. There is also the option to delete all entries to database (very useful for development). 
-- Contact form with server-side persistence of messages in SQLite.
+## 🌍 The Problem
 
-### Architecture
+Over 80% of clinical trials fail to meet enrollment targets, while millions of patients who could benefit never find out they qualify. The gap between patients and trials is a navigation problem — not a supply problem.
 
-The app uses Flask. SQLite is used for database management, and a central helpers.py module manages DB connections, schema initialization, API calls, and key domain utilities. HTTP requests to ClinicalTrials.gov and external services use the requests library, and templates are rendered using Jinja2 alongside Flask-Session for session management.
+## 💡 The Solution
 
-### Data Model
+TrialConnect is a full-stack web platform that uses AI to match patients to relevant clinical trials based on their condition, location, medical history, and eligibility criteria — in seconds.
 
-The database schema includes four tables: contacts, users, promoted_studies, and promotion_analytics. 
-- contacts: id, firstName, lastName, email, message.  
-- users: id, email (unique), firstName, lastName, birthYear, sex, password_hash, auth_provider, provider_id, profile_picture_url, remember_token, created_at, reset_token, reset_token_expiration.  
-- promoted_studies: nct_id (PK), added_at.  
-- promotion_analytics: id, nct_id, search_term, view_date.
+**Live at:** https://trialconnect-404183020569.us-central1.run.app
 
-### ClinicalTrials.gov Integration
+---
 
-Search is implemented against the v2 Studies endpoint with parameters such as query.term, filter.overallStatus, and filter.geo distance(...) to retrieve nearby recruiting and not-yet-recruiting studies in JSON. The response is parsed from protocolSection to extract identificationModule (e.g., nctId, briefTitle), statusModule (overallStatus), conditionsModule, and contactsLocationsModule.locations with geoPoint for mapping. For per-study eligibility, the app requests fields=EligibilityModule and reads sex, minimumAge, and maximumAge to support simple age/sex matching logic.
+## ✨ Key Features
 
-### Eligibility Matching
+- **Semantic Trial Search** — MongoDB Atlas vector search finds trials by meaning, not just keywords
+- **AI Eligibility Matching** — Gemini 1.5 Pro analyzes trial inclusion/exclusion criteria against your profile
+- **Medical Document Upload** — Upload a PDF/image of your medical records; Gemini extracts your profile automatically
+- **Proximity Scoring** — Trials ranked by distance to nearest site using geospatial queries
+- **AI Agent** — Vertex AI Agent Builder chatbot guides patients to the right trials
+- **Promoted Trials** — Sponsor dashboard to boost trial visibility
+- **Google OAuth + Local Auth** — Secure login with remember-me support
+- **Admin Dashboard** — Full user and content management
 
-When a user profile contains a birthYear and sex, the application computes age from the current year and compares sex and age to the study’s eligibilityModule constraints. Sex matches when the study accepts ALL or explicitly matches MALE/FEMALE, and age matches when the computed age falls within [minimumAge, maximumAge] after parsing numeric values from strings like “0 Years.” Outcomes are one of MATCH, NO_MATCH, or NO_DATA (with a reason), enabling transparent ranking signals and explanations in the UI.
+---
 
-### Authentication & Security
+## 🏗️ Architecture
 
-Local registration uses werkzeug’s password hashing with a basic password-strength validator requiring length and character variety. Google sign-in is supported via Authlib and a Google OAuth client configuration.
+```
+User Browser
+    │
+    ▼
+Flask App (Google Cloud Run)
+    │
+    ├── MongoDB Atlas
+    │     ├── users          (accounts, profiles)
+    │     ├── trials         (indexed trial data + vectors)
+    │     ├── promoted       (sponsor-boosted trials)
+    │     └── contacts       (contact form submissions)
+    │
+    ├── Vertex AI / Gemini 1.5 Pro
+    │     ├── Eligibility matching
+    │     ├── Medical document extraction
+    │     └── Agent Builder chatbot
+    │
+    └── ClinicalTrials.gov API
+          └── Live trial data source
+```
 
-### Geolocation & Distance
+---
 
-A helper uses ip-api.com to resolve approximate latitude and longitude from the requester’s IP. A Haversine implementation computes distances between coordinates when needed, complementing API-driven location filtering via filter.geo.
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | HTML, Bootstrap 5, Vanilla JS |
+| Backend | Python 3.11, Flask |
+| Database | MongoDB Atlas (vector search + geospatial) |
+| AI/ML | Google Gemini 1.5 Pro (Vertex AI) |
+| Agent | Vertex AI Agent Builder |
+| Hosting | Google Cloud Run |
+| Auth | Google OAuth 2.0 + Werkzeug password hashing |
+| Data | ClinicalTrials.gov REST API |
+| DevOps | Docker, Cloud Build, Artifact Registry |
+
+---
+
+## 🚀 Running Locally
+
+### Prerequisites
+- Python 3.11+
+- MongoDB Atlas account
+- Google Cloud project with Vertex AI enabled
 
 ### Setup
 
-- Create and activate a Python virtual environment, then install dependencies: pip install -r requirements.txt.  
-- Provide configuration via environment variables or a .env file for Flask secret keys and Google OAuth credentials.
+```bash
+git clone https://github.com/mnouira02/trialconnect.git
+cd trialconnect
+python -m venv .venv
+.venv\Scripts\activate  # Windows
+source .venv/bin/activate  # Mac/Linux
+pip install -r requirements.txt
+```
 
-### Running
+### Environment Variables
 
-Start the development server with python run.py, which creates the Flask app via the application factory and enables debug mode for local iteration.
+Create a `.env` file in the root:
 
-### Design Decisions
+```env
+FLASK_SECRET_KEY=your-secret-key-here
+MONGODB_URI=mongodb+srv://...
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+VERTEX_AI_LOCATION=us-central1
+GOOGLE_MAPS_API_KEY=your-maps-api-key
+```
 
-- ClinicalTrials.gov v2 was chosen for its structured protocolSection modules and modernized JSON schema, simplifying parsing and long-term maintenance.  
-- SQLite was selected for simplicity and zero external dependencies. 
-- A promotions table plus lightweight analytics enable non-invasive boosting and visibility tracking without overcomplicating ranking. 
-- The initial eligibility match is intentionally narrow (age/sex) to balance clarity, performance, and testability before tackling free-text inclusion/exclusion parsing.
+### Run
 
-### Limitations & Future Work
+```bash
+python run.py
+```
 
-- Expand eligibility matching to parse additional inclusion/exclusion text, potentially leveraging structured fields and NLP for robust criteria interpretation.
-- Improve dependency hygiene by removing items (e.g., sqlite3) from requirements.txt and managing frontend libraries like Bootstrap via static assets or a bundler.
+App runs at `http://localhost:5000`
 
-### File Guide (Authored/Configured) [2]
+---
 
-- run.py: Entrypoint that imports create_app.
-- helpers.py: DB connection lifecycle, schema init, contact/user helpers, promotions/analytics, ClinicalTrials.gov search/formatting, IP geolocation, Haversine, and eligibility matching.
-- templates folder: contains all the html leveraging jinja templating
+## ☁️ Deploy to Cloud Run
+
+```bash
+gcloud run deploy trialconnect \
+  --source . \
+  --region us-central1 \
+  --project YOUR_PROJECT_ID
+```
+
+---
+
+## 🧠 How the AI Matching Works
+
+1. **Basic match** — Age and sex checked against trial inclusion criteria using rule-based logic
+2. **Semantic search** — MongoDB Atlas vector search finds trials semantically related to the patient's condition
+3. **Gemini eligibility check** — Full eligibility text fetched from ClinicalTrials.gov API and analyzed by Gemini 1.5 Pro against the patient's complete medical profile
+4. **Score** — Trials ranked by a composite score: semantic similarity + proximity + recruitment status + eligibility match
+
+---
+
+## 📁 Project Structure
+
+```
+trialconnect/
+├── trialconnect/
+│   ├── __init__.py        # App factory
+│   ├── routes.py          # All Flask routes + OpenAPI spec
+│   ├── oauth_setup.py     # Google OAuth configuration
+│   ├── static/            # CSS, JS, images
+│   └── templates/         # Jinja2 HTML templates
+├── helpers.py             # MongoDB, Gemini, search logic
+├── Dockerfile             # Container definition
+├── requirements.txt       # Python dependencies
+└── run.py                 # Local dev entry point
+```
+
+---
+
+## 🔗 API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/search` | GET | Search trials by query + location |
+| `/api/check_match/<nct_id>` | GET/POST | AI eligibility check for a trial |
+| `/api/upload_profile` | POST | Extract medical profile from document |
+| `/api/openapi.json` | GET | OpenAPI 3.0 spec for agent integration |
+
+---
+
+## 👥 Team
+
+Built with ❤️ for patients navigating the clinical trial landscape.
+
+---
+
+## 📄 License
+
+MIT License
