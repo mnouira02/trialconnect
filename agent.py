@@ -10,18 +10,17 @@ os.environ.setdefault('GOOGLE_CLOUD_LOCATION', 'us-central1')
 
 def search_trials(condition: str, location: str) -> dict:
     """Search for clinical trials by medical condition and location.
-    
+
     Args:
         condition: The medical condition or disease to search for (e.g. 'lung cancer', 'diabetes').
         location: City, state, or address to search near (e.g. 'Chicago, IL').
-    
+
     Returns:
         A dict with a 'trials' list, each containing nctId, title, status, conditions,
         interventions, closest_site_km, and a URL.
     """
     import requests as req
     try:
-        # Geocode the location
         maps_key = os.environ.get('GOOGLE_MAPS_API_KEY', '')
         geo_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={req.utils.quote(location)}&key={maps_key}"
         geo_resp = req.get(geo_url, timeout=5).json()
@@ -34,6 +33,13 @@ def search_trials(condition: str, location: str) -> dict:
         raw_results = search_trials_mongo(condition, lat, lon, radius_km=300)
         output = []
         for study in raw_results[:5]:
+            # search_trials_mongo $project renames fields to: nctId, title, status, conditions
+            # Fall back to raw MongoDB field names in case vector search is skipped
+            nct_id   = study.get('nctId')   or study.get('nct_id')
+            title    = study.get('title')   or study.get('brief_title')
+            status   = study.get('status')  or study.get('overall_status')
+            conditions = study.get('conditions') or study.get('conditions_str', '')
+
             min_distance = float('inf')
             for site in study.get('locations', []):
                 geo = site.get('geoPoint') or site
@@ -42,14 +48,19 @@ def search_trials(condition: str, location: str) -> dict:
                     dist = haversine(lat, lon, slat, slon)
                     if dist < min_distance:
                         min_distance = dist
+
+            interventions = [
+                i.get('name', '') for i in study.get('interventions', [])
+            ][:3]
+
             output.append({
-                "nctId": study.get('nctId'),
-                "title": study.get('briefTitle'),
-                "status": study.get('overallStatus'),
-                "conditions": study.get('conditions', []),
-                "interventions": [i.get('name', '') for i in study.get('interventions', [])][:3],
+                "nctId": nct_id,
+                "title": title,
+                "status": status,
+                "conditions": conditions,
+                "interventions": interventions,
                 "closest_site_km": round(min_distance) if min_distance != float('inf') else None,
-                "url": f"https://clinicaltrials.gov/study/{study.get('nctId')}"
+                "url": f"https://clinicaltrials.gov/study/{nct_id}"
             })
         return {"trials": output, "count": len(output)}
     except Exception as e:
@@ -60,7 +71,7 @@ def check_eligibility(nct_id: str, age: int = None, sex: str = None,
                       diagnosis: str = None, prior_treatments: str = None,
                       comorbidities: str = None) -> dict:
     """Check whether a patient is eligible for a specific clinical trial.
-    
+
     Args:
         nct_id: The ClinicalTrials.gov NCT identifier (e.g. 'NCT04123456').
         age: Patient age in years.
@@ -68,7 +79,7 @@ def check_eligibility(nct_id: str, age: int = None, sex: str = None,
         diagnosis: Patient's primary diagnosis or condition details.
         prior_treatments: Previous treatments the patient has received.
         comorbidities: Other conditions or comorbidities the patient has.
-    
+
     Returns:
         A dict with eligibility status ('ELIGIBLE', 'INELIGIBLE', or 'UNCERTAIN')
         and a reason explaining the determination.
@@ -76,8 +87,10 @@ def check_eligibility(nct_id: str, age: int = None, sex: str = None,
     try:
         from helpers import fetch_trial_eligibility_text, gemini_eligibility_check
         patient_profile = {k: v for k, v in {
-            'age': age, 'sex': (sex or '').upper() or None,
-            'diagnosis': diagnosis, 'prior_treatments': prior_treatments,
+            'age': age,
+            'sex': (sex or '').upper() or None,
+            'diagnosis': diagnosis,
+            'prior_treatments': prior_treatments,
             'comorbidities': comorbidities
         }.items() if v}
         eligibility_text = fetch_trial_eligibility_text(nct_id)
@@ -101,7 +114,7 @@ root_agent = LlmAgent(
     instruction=(
         'You are a clinical trial assistant. When a user describes their condition and location:\n'
         '1. Call search_trials with their condition and location\n'
-        '2. Present the top results with trial name, status, and distance\n'
+        '2. Present the top results clearly: trial title, NCT ID, status, and distance in km\n'
         '3. Ask if they want an eligibility check — if yes, call check_eligibility with their NCT ID and profile details\n'
         'Always recommend consulting a doctor before enrolling.'
     ),
