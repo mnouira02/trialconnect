@@ -50,7 +50,6 @@
 {% block scripts %}
 {% if query %}
 <style>
-/* Spinning Gemini logo badge */
 .gemini-checking {
     display: inline-flex;
     align-items: center;
@@ -79,8 +78,6 @@
     75%  { transform: rotate(270deg); opacity: 0.6;  }
     100% { transform: rotate(360deg); opacity: 1;    }
 }
-
-/* Resolved match badge */
 .match-badge {
     display: inline-flex;
     align-items: center;
@@ -101,8 +98,6 @@
 .match-badge.no-match { background:#fee2e2; border:1px solid #ef4444; color:#991b1b; }
 .match-badge.unknown  { background:#f3f4f6; border:1px solid #9ca3af; color:#374151; }
 .match-badge .gemini-icon { width:16px; height:16px; flex-shrink:0; }
-
-/* Reason popover */
 .match-reason-box {
     display: none;
     position: absolute;
@@ -137,7 +132,6 @@
     const GOOGLE_MAPS_API_KEY = {{ google_maps_api_key|tojson }};
     const IS_LOGGED_IN = {{ session.get('user') is not none | tojson }};
 
-    /* ---------- Gemini SVG logo (multi-colour star) ---------- */
     function geminiSVG() {
         return `<svg class="gemini-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
   <path d="M14 2C14 2 10.5 10.5 2 14C10.5 17.5 14 26 14 26C14 26 17.5 17.5 26 14C17.5 10.5 14 2 14 2Z"
@@ -152,7 +146,6 @@
 </svg>`;
     }
 
-    /* ---------- Spinning placeholder (shown while fetching) ---------- */
     function spinnerHTML(nctId) {
         if (!IS_LOGGED_IN) return '';
         return `<span id="match-badge-${nctId}" class="gemini-checking" title="Checking eligibility with Gemini AI">` +
@@ -160,7 +153,6 @@
                `<span>Checking&hellip;</span></span>`;
     }
 
-    /* ---------- Resolved badge (replaces spinner after fetch) ---------- */
     function resolvedBadgeHTML(status, verdict, confidence, reason, summary) {
         let cls, icon, label;
         const v = (verdict || status || '').toUpperCase();
@@ -173,17 +165,14 @@
         } else {
             cls = 'unknown'; icon = ''; label = 'Checking AI…';
         }
-
         const confText = (confidence !== undefined && confidence !== null)
             ? ` <span style="opacity:0.7">${confidence}%</span>` : '';
-
         let reasonLines = [];
         if (summary) reasonLines.push(summary);
         else if (reason) reasonLines.push(reason);
         const reasonHTML = reasonLines.length
             ? `<div class="match-reason-box">${reasonLines.map(l => `<div>${l}</div>`).join('')}</div>`
             : '';
-
         return `<span class="match-badge ${cls}" tabindex="0">
                     ${geminiSVG()}
                     ${icon} ${label}${confText}
@@ -273,8 +262,6 @@
             return diff !== 0 ? diff : (a.closest_distance_km||Infinity) - (b.closest_distance_km||Infinity);
         });
         buildResultsList(studies);
-
-        // ── Inject full context into the chat widget ──
         if (typeof tcSetContext === 'function') {
             tcSetContext({
                 query: QUERY,
@@ -306,7 +293,6 @@
             let promotedBadgeHTML = '';
             let statusBadgeHTML  = '';
             let matchBadgeHTML   = '';
-
             if (study.is_promoted) {
                 cardClasses = 'card h-100 shadow border border-primary';
                 promotedBadgeHTML = `<div class="badge bg-primary bg-gradient rounded-pill mb-2 me-2"><i class="bi bi-star-fill"></i> Promoted</div>`;
@@ -314,7 +300,6 @@
             if (study.status === 'NOT_YET_RECRUITING') {
                 statusBadgeHTML = `<div class="badge border border-primary text-primary rounded-pill mb-2 d-inline-block">${study.status.replace(/_/g,' ')}</div>`;
             }
-
             if (study.match_status && study.match_status !== 'NO_DATA') {
                 matchBadgeHTML = resolvedBadgeHTML(
                     study.match_status, study.match_status,
@@ -323,13 +308,11 @@
             } else if (IS_LOGGED_IN) {
                 matchBadgeHTML = spinnerHTML(study.nctId);
             }
-
             const distanceHTML = study.closest_distance_km !== undefined
                 ? `<div class="text-end ps-3" style="min-width:120px">
                        <span class="h4 d-block mb-0">${Math.round(study.closest_distance_km)}</span>
                        <span class="text-muted small">km</span>
                    </div>` : '';
-
             html += `
             <div class="col-12 mb-4">
               <div class="${cardClasses}">
@@ -362,29 +345,62 @@
         bounds.extend({ lat: centerLat, lng: centerLon });
         const searchRadiusKM = 200;
         const locationsMap = {};
+
         studies.forEach(study => {
-            study.locations.forEach(location => {
-                if (location.geoPoint) {
-                    const lat = parseFloat(location.geoPoint.lat);
-                    const lon = parseFloat(location.geoPoint.lon);
-                    if (!isNaN(lat) && !isNaN(lon) && haversine(centerLat, centerLon, lat, lon) <= searchRadiusKM) {
-                        const key = `${lat},${lon}`;
-                        if (!locationsMap[key]) {
-                            locationsMap[key] = { position: { lat, lng: lon }, facility: location.facility || 'N/A', studies: [] };
-                        }
-                        locationsMap[key].studies.push({ title: study.title, nctId: study.nctId, status: study.status.replace(/_/g,' ') });
-                    }
+            (study.locations || []).forEach(location => {
+                // Robust extraction: handle geoPoint object, flat lat/lon, or missing coords
+                let lat, lon;
+                if (location.geoPoint && location.geoPoint.lat != null && location.geoPoint.lon != null) {
+                    lat = parseFloat(location.geoPoint.lat);
+                    lon = parseFloat(location.geoPoint.lon);
+                } else if (location.lat != null && location.lon != null) {
+                    lat = parseFloat(location.lat);
+                    lon = parseFloat(location.lon);
+                } else {
+                    return; // skip location with no coords
                 }
+                if (isNaN(lat) || isNaN(lon)) return;
+                if (haversine(centerLat, centerLon, lat, lon) > searchRadiusKM) return;
+
+                const key = `${lat},${lon}`;
+                if (!locationsMap[key]) {
+                    locationsMap[key] = {
+                        position: { lat, lng: lon },
+                        facility: location.facility || 'N/A',
+                        studies: []
+                    };
+                }
+                locationsMap[key].studies.push({
+                    title: study.title,
+                    nctId: study.nctId,
+                    status: (study.status || '').replace(/_/g, ' ')
+                });
             });
         });
+
         Object.values(locationsMap).forEach(locGroup => {
             locGroup.studies.sort((a,b) => a.title.localeCompare(b.title));
-            let markerIcon = { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: "#42a5f5", fillOpacity: 1, strokeColor: "white", strokeWeight: 1.5 };
-            if (locGroup.studies.length > 1) { markerIcon.scale = 10; markerIcon.fillColor = "#0D47A1"; }
-            const marker = new google.maps.Marker({ position: locGroup.position, map, icon: markerIcon });
+            let markerIcon = {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 7,
+                fillColor: "#42a5f5",
+                fillOpacity: 1,
+                strokeColor: "white",
+                strokeWeight: 1.5
+            };
+            if (locGroup.studies.length > 1) {
+                markerIcon.scale = 10;
+                markerIcon.fillColor = "#0D47A1";
+            }
+            const marker = new google.maps.Marker({
+                position: locGroup.position, map, icon: markerIcon
+            });
             markerList.push(marker);
             if (locGroup.studies.length > 1) {
-                marker.setLabel({ text: locGroup.studies.length.toString(), color: "white", fontWeight: "bold", fontSize: "11px" });
+                marker.setLabel({
+                    text: locGroup.studies.length.toString(),
+                    color: "white", fontWeight: "bold", fontSize: "11px"
+                });
             }
             marker.addListener('click', () => {
                 let c = `<div style="min-width:320px;max-height:240px;overflow-y:auto;padding:0;color:#212529;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">`;
@@ -399,8 +415,14 @@
             });
             bounds.extend(locGroup.position);
         });
+
         if (isInitialLoad) {
-            bounds.getNorthEast().equals(bounds.getSouthWest()) ? (map.setCenter(bounds.getCenter()), map.setZoom(11)) : map.fitBounds(bounds);
+            if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
+                map.setCenter(bounds.getCenter());
+                map.setZoom(11);
+            } else {
+                map.fitBounds(bounds);
+            }
         }
     }
 
@@ -463,7 +485,6 @@
                 searchLat = loc.lat; searchLon = loc.lon;
             } catch { searchLat = FALLBACK_LAT; searchLon = FALLBACK_LON; }
 
-            // Store user location string for chat context
             window._tcUserLocation = `${searchLat.toFixed(2)}, ${searchLon.toFixed(2)}`;
 
             try {
@@ -480,7 +501,7 @@
             } catch (e) {
                 console.error("runSearch error:", e);
                 document.getElementById('results-list-container').innerHTML =
-                    '<div class="col-12"><p class="text-center text-danger">A critical error occurred loading map data.</p></div>';
+                    '<div class="col-12"><p class="text-center text-danger">An error occurred loading results. Please try again.</p></div>';
             }
         })();
     });
