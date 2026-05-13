@@ -40,100 +40,21 @@ def index():
 
 @app.route('/api/openapi.json')
 def openapi_spec():
-    """OpenAPI 3.0 spec for Agent Builder tool integration."""
     spec = {
         "openapi": "3.0.0",
-        "info": {
-            "title": "TrialConnect API",
-            "version": "1.0.0",
-            "description": "AI-powered clinical trial search and eligibility matching API."
-        },
+        "info": {"title": "TrialConnect API", "version": "1.0.0", "description": "AI-powered clinical trial search and eligibility matching API."},
         "servers": [{"url": "https://trialconnect-404183020569.us-central1.run.app"}],
         "paths": {
             "/api/search": {
                 "get": {
                     "operationId": "searchTrials",
                     "summary": "Search for clinical trials by condition and location",
-                    "description": "Returns a ranked list of clinical trials matching the query, sorted by AI relevance score and proximity to the user.",
                     "parameters": [
-                        {
-                            "name": "query",
-                            "in": "query",
-                            "required": True,
-                            "schema": {"type": "string"},
-                            "description": "Medical condition or trial type to search for (e.g. 'breast cancer', 'type 2 diabetes')"
-                        },
-                        {
-                            "name": "lat",
-                            "in": "query",
-                            "required": True,
-                            "schema": {"type": "number"},
-                            "description": "Patient latitude coordinate"
-                        },
-                        {
-                            "name": "lon",
-                            "in": "query",
-                            "required": True,
-                            "schema": {"type": "number"},
-                            "description": "Patient longitude coordinate"
-                        }
+                        {"name": "query", "in": "query", "required": True, "schema": {"type": "string"}},
+                        {"name": "lat", "in": "query", "required": True, "schema": {"type": "number"}},
+                        {"name": "lon", "in": "query", "required": True, "schema": {"type": "number"}}
                     ],
-                    "responses": {
-                        "200": {
-                            "description": "List of matching clinical trials ranked by relevance",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "nctId": {"type": "string", "description": "ClinicalTrials.gov identifier"},
-                                                "briefTitle": {"type": "string", "description": "Trial title"},
-                                                "overallStatus": {"type": "string", "description": "Recruiting status"},
-                                                "score": {"type": "number", "description": "AI relevance score"},
-                                                "closest_distance_km": {"type": "number", "description": "Distance to nearest trial site in km"},
-                                                "conditions": {"type": "array", "items": {"type": "string"}},
-                                                "interventions": {"type": "array", "items": {"type": "string"}}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "/api/check_match/{nct_id}": {
-                "get": {
-                    "operationId": "checkTrialMatch",
-                    "summary": "Check if a patient matches a clinical trial's eligibility criteria",
-                    "description": "Uses Gemini AI to analyze trial eligibility criteria against a patient profile and returns a match status with reasoning.",
-                    "parameters": [
-                        {
-                            "name": "nct_id",
-                            "in": "path",
-                            "required": True,
-                            "schema": {"type": "string"},
-                            "description": "The NCT ID of the clinical trial (e.g. NCT04567890)"
-                        }
-                    ],
-                    "responses": {
-                        "200": {
-                            "description": "Eligibility match result",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "status": {"type": "string", "enum": ["LIKELY_ELIGIBLE", "LIKELY_INELIGIBLE", "UNCERTAIN", "NO_DATA"]},
-                                            "reason": {"type": "string", "description": "Explanation of the eligibility decision"}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    "responses": {"200": {"description": "List of matching trials"}}
                 }
             }
         }
@@ -258,28 +179,82 @@ def api_check_match(nct_id):
         return jsonify({"error": "Match check failed."}), 500
 
 
+# --- AI Chat Agent Endpoint ---
+@app.route('/api/agent_chat', methods=['POST'])
+def api_agent_chat():
+    """
+    Receives a user message + current search context from the frontend chat widget.
+    Calls Gemini with the full trial context injected into the system prompt.
+    Returns a conversational answer grounded in what the user is actually seeing.
+    """
+    body = request.get_json(silent=True) or {}
+    user_message = body.get('message', '').strip()
+    context = body.get('context')  # { query, location, trials: [...] }
+
+    if not user_message:
+        return jsonify({'reply': 'Please ask me a question.'}), 400
+
+    # Build system context from the trials the user is currently viewing
+    system_context = ""
+    if context and context.get('trials'):
+        trials_lines = []
+        for t in context['trials']:
+            eligibility = t.get('eligibility_status', 'not checked')
+            reason = t.get('eligibility_reason', '')
+            reason_str = f" | Reason: {reason}" if reason else ""
+            trials_lines.append(
+                f"  #{t.get('rank')} [{t.get('nctId')}] {t.get('briefTitle')} "
+                f"| Status: {t.get('overallStatus')} "
+                f"| Distance: {t.get('closest_distance_km', '?')}km "
+                f"| Eligibility: {eligibility}{reason_str}"
+            )
+        system_context = (
+            f"The user is viewing TrialConnect search results.\n"
+            f"Search query: \"{context.get('query')}\"\n"
+            f"Location: {context.get('location')}\n"
+            f"Trials currently shown to the user:\n" + "\n".join(trials_lines) + "\n\n"
+            f"Answer the user's question based specifically on these trials. "
+            f"If asked why they are or aren't eligible for a specific trial, use the eligibility reason above. "
+            f"Be concise, empathetic, and helpful. "
+            f"Never provide medical advice. Always recommend consulting a doctor for treatment decisions."
+        )
+    else:
+        system_context = (
+            "You are a helpful clinical trial assistant for TrialConnect. "
+            "Help the user understand clinical trials, eligibility criteria, and how to use the platform. "
+            "Never provide medical advice. Always recommend consulting a doctor."
+        )
+
+    try:
+        import vertexai
+        from vertexai.generative_models import GenerativeModel
+        vertexai.init(
+            project=current_app.config.get('GOOGLE_CLOUD_PROJECT', 'trialconnect-app'),
+            location='us-central1'
+        )
+        model = GenerativeModel("gemini-1.5-flash")
+        full_prompt = f"{system_context}\n\nUser: {user_message}\n\nAssistant:"
+        response = model.generate_content(full_prompt)
+        return jsonify({'reply': response.text})
+    except Exception as e:
+        print(f"Agent chat error: {e}")
+        return jsonify({'reply': 'Sorry, I had trouble connecting to the AI. Please try again in a moment.'}), 500
+
+
 # --- MCP Endpoint for Vertex AI Agent Builder ---
 @app.route('/mcp', methods=['POST'])
 def mcp_handler():
-    """
-    MCP (Model Context Protocol) endpoint for Vertex AI Agent Builder.
-    Handles tool calls: search_trials and check_eligibility.
-    """
     body = request.get_json(silent=True)
     if not body:
         return jsonify({"error": "Invalid request body"}), 400
-
     tool_name = body.get('tool')
     params = body.get('parameters', {})
 
-    # --- Tool: search_trials ---
     if tool_name == 'search_trials':
         condition = params.get('condition', '')
         location = params.get('location', '')
         lat = params.get('lat')
         lon = params.get('lon')
-
-        # If lat/lon not provided, geocode location using a simple lookup
         if not lat or not lon:
             try:
                 maps_key = current_app.config.get('GOOGLE_MAPS_API_KEY', '')
@@ -293,11 +268,10 @@ def mcp_handler():
                     return jsonify({"error": f"Could not geocode location: {location}"}), 400
             except Exception as e:
                 return jsonify({"error": f"Geocoding failed: {str(e)}"}), 500
-
         try:
             raw_results = search_trials_mongo(condition, lat, lon, radius_km=300)
             output = []
-            for study in raw_results[:5]:  # Return top 5 to keep response concise
+            for study in raw_results[:5]:
                 min_distance = float('inf')
                 for loc in study.get('locations', []):
                     geo = loc.get('geoPoint') or loc
@@ -320,67 +294,31 @@ def mcp_handler():
         except Exception as e:
             return jsonify({"error": f"Search failed: {str(e)}"}), 500
 
-    # --- Tool: check_eligibility ---
     elif tool_name == 'check_eligibility':
         nct_id = params.get('nct_id')
-        age = params.get('age')
-        sex = params.get('sex', '').upper()
-        diagnosis = params.get('diagnosis', '')
-        prior_treatments = params.get('prior_treatments', '')
-        comorbidities = params.get('comorbidities', '')
-
         if not nct_id:
             return jsonify({"error": "nct_id is required"}), 400
-
-        patient_profile = {
-            "age": age,
-            "sex": sex,
-            "diagnosis": diagnosis,
-            "prior_treatments": prior_treatments,
-            "comorbidities": comorbidities
-        }
-        patient_profile = {k: v for k, v in patient_profile.items() if v}
-
+        patient_profile = {k: v for k, v in {
+            "age": params.get('age'), "sex": params.get('sex', '').upper(),
+            "diagnosis": params.get('diagnosis', ''),
+            "prior_treatments": params.get('prior_treatments', ''),
+            "comorbidities": params.get('comorbidities', '')
+        }.items() if v}
         try:
             eligibility_text = fetch_trial_eligibility_text(nct_id)
             if not eligibility_text:
-                return jsonify({"status": "NO_DATA", "reason": "No eligibility criteria found for this trial."})
-            result = gemini_eligibility_check(patient_profile, eligibility_text, nct_id)
-            return jsonify(result)
+                return jsonify({"status": "NO_DATA", "reason": "No eligibility criteria found."})
+            return jsonify(gemini_eligibility_check(patient_profile, eligibility_text, nct_id))
         except Exception as e:
             return jsonify({"error": f"Eligibility check failed: {str(e)}"}), 500
 
-    # --- Tool: list_tools (MCP discovery) ---
-    elif tool_name == 'list_tools' or tool_name is None:
-        return jsonify({
-            "tools": [
-                {
-                    "name": "search_trials",
-                    "description": "Search for clinical trials by medical condition and patient location. Returns top matching trials with distance to nearest site.",
-                    "parameters": {
-                        "condition": {"type": "string", "description": "Medical condition (e.g. lung cancer, type 2 diabetes)", "required": True},
-                        "location": {"type": "string", "description": "City, state or country (e.g. Chicago, IL)", "required": True},
-                        "lat": {"type": "number", "description": "Latitude (optional, overrides location string)"},
-                        "lon": {"type": "number", "description": "Longitude (optional, overrides location string)"}
-                    }
-                },
-                {
-                    "name": "check_eligibility",
-                    "description": "Check whether a patient is likely eligible for a specific clinical trial using Gemini AI.",
-                    "parameters": {
-                        "nct_id": {"type": "string", "description": "ClinicalTrials.gov NCT ID (e.g. NCT04567890)", "required": True},
-                        "age": {"type": "integer", "description": "Patient age in years"},
-                        "sex": {"type": "string", "description": "MALE or FEMALE"},
-                        "diagnosis": {"type": "string", "description": "Primary diagnosis"},
-                        "prior_treatments": {"type": "string", "description": "Previous treatments received"},
-                        "comorbidities": {"type": "string", "description": "Other medical conditions"}
-                    }
-                }
-            ]
-        })
-
     else:
-        return jsonify({"error": f"Unknown tool: {tool_name}"}), 404
+        return jsonify({"tools": [
+            {"name": "search_trials", "description": "Search clinical trials by condition and location",
+             "parameters": {"condition": {"type": "string", "required": True}, "location": {"type": "string", "required": True}}},
+            {"name": "check_eligibility", "description": "Check patient eligibility for a trial using Gemini AI",
+             "parameters": {"nct_id": {"type": "string", "required": True}, "age": {"type": "integer"}, "sex": {"type": "string"}, "diagnosis": {"type": "string"}}}
+        ]})
 
 
 # --- Static Page Routes ---
@@ -586,12 +524,7 @@ def profile():
         lastName = request.form.get('lastName')
         birthYear = request.form.get('birthYear')
         sex = request.form.get('sex')
-        update_fields = {
-            'firstName': firstName,
-            'lastName': lastName,
-            'birthYear': birthYear,
-            'sex': sex
-        }
+        update_fields = {'firstName': firstName, 'lastName': lastName, 'birthYear': birthYear, 'sex': sex}
         if 'profile_picture' in request.files:
             file = request.files['profile_picture']
             if file and file.filename and allowed_file(file.filename):
@@ -614,10 +547,7 @@ def profile():
             else:
                 update_fields['password_hash'] = generate_password_hash(new_password)
                 flash("Your password was updated successfully!", "success")
-        db['users'].update_one(
-            {'_id': ObjectId(user_id)},
-            {'$set': update_fields}
-        )
+        db['users'].update_one({'_id': ObjectId(user_id)}, {'$set': update_fields})
         session['user'] = get_user_by_id(user_id)
         password_flashed = any(
             cat in ['success', 'danger']

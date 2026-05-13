@@ -162,7 +162,6 @@
 
     /* ---------- Resolved badge (replaces spinner after fetch) ---------- */
     function resolvedBadgeHTML(status, verdict, confidence, reason, summary) {
-        // Choose style
         let cls, icon, label;
         const v = (verdict || status || '').toUpperCase();
         if (v === 'MATCH') {
@@ -178,7 +177,6 @@
         const confText = (confidence !== undefined && confidence !== null)
             ? ` <span style="opacity:0.7">${confidence}%</span>` : '';
 
-        // Build reason lines
         let reasonLines = [];
         if (summary) reasonLines.push(summary);
         else if (reason) reasonLines.push(reason);
@@ -246,7 +244,6 @@
         }
     }
 
-    /* ---------- Live badge injection during sequential fetch ---------- */
     function injectResolvedBadge(nctId, data) {
         const el = document.getElementById(`match-badge-${nctId}`);
         if (!el) return;
@@ -271,12 +268,30 @@
                 study.match_status = 'NO_DATA';
             }
         }
-        // Re-sort once all checks done
         studies.sort((a, b) => {
             const diff = getSortGroup(a) - getSortGroup(b);
             return diff !== 0 ? diff : (a.closest_distance_km||Infinity) - (b.closest_distance_km||Infinity);
         });
         buildResultsList(studies);
+
+        // ── Inject full context into the chat widget ──
+        if (typeof tcSetContext === 'function') {
+            tcSetContext({
+                query: QUERY,
+                location: window._tcUserLocation || 'unknown location',
+                trials: studies.map((s, i) => ({
+                    rank: i + 1,
+                    nctId: s.nctId,
+                    briefTitle: s.title || s.briefTitle,
+                    overallStatus: s.status || s.overallStatus,
+                    closest_distance_km: s.closest_distance_km,
+                    score: s.score,
+                    conditions: Array.isArray(s.conditions) ? s.conditions.join(', ') : s.conditions,
+                    eligibility_status: s.match_status || 'not checked',
+                    eligibility_reason: s.match_reason || ''
+                }))
+            });
+        }
     }
 
     function buildResultsList(studies) {
@@ -301,13 +316,11 @@
             }
 
             if (study.match_status && study.match_status !== 'NO_DATA') {
-                // Already resolved — render final badge directly
                 matchBadgeHTML = resolvedBadgeHTML(
                     study.match_status, study.match_status,
                     study.match_conf, study.match_reason, null
                 );
             } else if (IS_LOGGED_IN) {
-                // Not yet checked — show spinning Gemini placeholder
                 matchBadgeHTML = spinnerHTML(study.nctId);
             }
 
@@ -449,6 +462,10 @@
                 const loc = await getBrowserLocation();
                 searchLat = loc.lat; searchLon = loc.lon;
             } catch { searchLat = FALLBACK_LAT; searchLon = FALLBACK_LON; }
+
+            // Store user location string for chat context
+            window._tcUserLocation = `${searchLat.toFixed(2)}, ${searchLon.toFixed(2)}`;
+
             try {
                 loadMapsAPI();
                 const dataPromise = fetch(`/api/search?query=${encodeURIComponent(QUERY)}&lat=${searchLat}&lon=${searchLon}&radius=200`);
