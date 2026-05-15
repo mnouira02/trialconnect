@@ -1,0 +1,589 @@
+{% extends "layout.html" %}
+
+{% block title %}Find Your Trial — TrialConnect{% endblock %}
+
+{% block content %}
+<style>
+/* ── Wizard shell ── */
+.wizard-shell {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0d1117 0%, #161b22 60%, #0d1117 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+}
+.wizard-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 640px;
+  padding: 2.5rem;
+  box-shadow: 0 24px 80px rgba(0,0,0,.55);
+}
+/* ── Step indicators ── */
+.step-indicators {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 2.5rem;
+}
+.step-dot {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 2px solid #30363d;
+  background: #0d1117;
+  color: #8b949e;
+  font-size: .78rem;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  transition: all .3s;
+  flex-shrink: 0;
+}
+.step-dot.active   { border-color: #58a6ff; background: #1f6feb; color: #fff; }
+.step-dot.complete { border-color: #3fb950; background: #238636; color: #fff; }
+.step-line {
+  flex: 1;
+  height: 2px;
+  background: #30363d;
+  transition: background .3s;
+}
+.step-line.complete { background: #238636; }
+.step-label {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: .7rem;
+  color: #8b949e;
+}
+.step-dot.active .step-label,
+.step-dot.complete .step-label { color: #c9d1d9; }
+
+/* ── Step panels ── */
+.step-panel { display: none; }
+.step-panel.active { display: block; }
+
+/* ── Typography ── */
+.wizard-title { font-size: 1.55rem; font-weight: 700; color: #f0f6fc; margin-bottom: .4rem; }
+.wizard-sub   { color: #8b949e; font-size: .95rem; margin-bottom: 1.8rem; }
+
+/* ── Form controls ── */
+.wz-label { color: #c9d1d9; font-size: .88rem; font-weight: 600; margin-bottom: .4rem; }
+.wz-input {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  color: #f0f6fc;
+  padding: .65rem 1rem;
+  font-size: .95rem;
+  width: 100%;
+  transition: border-color .2s;
+}
+.wz-input:focus { outline: none; border-color: #58a6ff; box-shadow: 0 0 0 3px rgba(88,166,255,.15); }
+.wz-input::placeholder { color: #484f58; }
+select.wz-input option { background: #161b22; }
+
+/* ── Quick-pick chips ── */
+.chip-grid { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.2rem; }
+.chip {
+  padding: .32rem .85rem;
+  border-radius: 50px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #8b949e;
+  font-size: .8rem;
+  cursor: pointer;
+  transition: all .15s;
+  user-select: none;
+}
+.chip:hover  { border-color: #58a6ff; color: #58a6ff; }
+.chip.active { border-color: #58a6ff; background: rgba(88,166,255,.12); color: #58a6ff; }
+
+/* ── Location row ── */
+.loc-row { display: flex; gap: .75rem; align-items: flex-end; }
+.loc-row .wz-input { flex: 1; }
+.loc-detect-btn {
+  flex-shrink: 0;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  color: #8b949e;
+  padding: .65rem .9rem;
+  font-size: .85rem;
+  cursor: pointer;
+  transition: all .2s;
+  white-space: nowrap;
+}
+.loc-detect-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+
+/* ── Upload zone ── */
+.upload-zone {
+  border: 2px dashed #30363d;
+  border-radius: 12px;
+  padding: 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  margin-bottom: 1rem;
+}
+.upload-zone:hover, .upload-zone.drag-over {
+  border-color: #58a6ff;
+  background: rgba(88,166,255,.04);
+}
+.upload-zone .upload-icon { font-size: 2rem; margin-bottom: .5rem; }
+.upload-zone p { color: #8b949e; font-size: .88rem; margin: 0; }
+.upload-zone .upload-hint { font-size: .78rem; color: #484f58; margin-top: .3rem; }
+.upload-status {
+  font-size: .85rem;
+  padding: .5rem .8rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  display: none;
+}
+.upload-status.success { background: rgba(63,185,80,.12); color: #3fb950; border: 1px solid #238636; display: block; }
+.upload-status.error   { background: rgba(248,81,73,.12);  color: #f85149; border: 1px solid #da3633; display: block; }
+.upload-status.loading { background: rgba(88,166,255,.08); color: #58a6ff; border: 1px solid #1f6feb; display: block; }
+
+/* ── Manual fields ── */
+.manual-toggle {
+  color: #58a6ff;
+  font-size: .85rem;
+  cursor: pointer;
+  text-decoration: underline;
+  display: inline-block;
+  margin-bottom: 1rem;
+}
+.manual-fields { display: none; }
+.manual-fields.open { display: block; }
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: .75rem; }
+
+/* ── Navigation buttons ── */
+.wz-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 2rem;
+  gap: 1rem;
+}
+.wz-nav .btn-back {
+  background: none;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  color: #8b949e;
+  padding: .6rem 1.2rem;
+  font-size: .9rem;
+  cursor: pointer;
+  transition: all .2s;
+}
+.wz-nav .btn-back:hover { border-color: #8b949e; color: #c9d1d9; }
+.wz-nav .btn-next {
+  background: #1f6feb;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  padding: .65rem 1.8rem;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .2s;
+  flex: 1;
+  max-width: 260px;
+}
+.wz-nav .btn-next:hover { background: #388bfd; }
+.wz-nav .btn-next:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+
+/* ── Profile summary card ── */
+.profile-summary {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.2rem;
+  display: none;
+}
+.profile-summary.visible { display: block; }
+.profile-summary .ps-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: .85rem;
+  color: #8b949e;
+  padding: .25rem 0;
+  border-bottom: 1px solid #21262d;
+}
+.profile-summary .ps-row:last-child { border-bottom: none; }
+.profile-summary .ps-val { color: #c9d1d9; font-weight: 500; }
+
+/* ── Skip text ── */
+.skip-link {
+  text-align: center;
+  margin-top: 1rem;
+}
+.skip-link a { color: #484f58; font-size: .82rem; text-decoration: none; }
+.skip-link a:hover { color: #8b949e; }
+
+/* ── Back to home ── */
+.back-home {
+  position: fixed;
+  top: 1.2rem;
+  left: 1.2rem;
+  color: #484f58;
+  font-size: .82rem;
+  text-decoration: none;
+  z-index: 100;
+  transition: color .2s;
+}
+.back-home:hover { color: #8b949e; }
+</style>
+
+<a href="{{ url_for('index') }}" class="back-home">← Back to home</a>
+
+<div class="wizard-shell">
+  <div class="wizard-card">
+
+    <!-- Step indicators -->
+    <div class="step-indicators" style="padding-top:1rem;">
+      <div class="step-dot active" id="dot-1"><span>1</span><div class="step-label">Condition</div></div>
+      <div class="step-line" id="line-1"></div>
+      <div class="step-dot" id="dot-2"><span>2</span><div class="step-label">Location</div></div>
+      <div class="step-line" id="line-2"></div>
+      <div class="step-dot" id="dot-3"><span>3</span><div class="step-label">Your Profile</div></div>
+    </div>
+
+    <!-- ═══════ STEP 1: Condition ═══════ -->
+    <div class="step-panel active" id="step-1">
+      <div class="wizard-title">What condition are you searching for?</div>
+      <div class="wizard-sub">Select one or type your own. We'll find trials matched to it.</div>
+
+      <p class="wz-label">Common conditions</p>
+      <div class="chip-grid" id="condition-chips">
+        <div class="chip" data-val="breast cancer">Breast Cancer</div>
+        <div class="chip" data-val="lung cancer">Lung Cancer</div>
+        <div class="chip" data-val="diabetes type 2">Type 2 Diabetes</div>
+        <div class="chip" data-val="heart failure">Heart Failure</div>
+        <div class="chip" data-val="COPD">COPD</div>
+        <div class="chip" data-val="depression">Depression</div>
+        <div class="chip" data-val="multiple sclerosis">Multiple Sclerosis</div>
+        <div class="chip" data-val="Alzheimer disease">Alzheimer's</div>
+        <div class="chip" data-val="Parkinson disease">Parkinson's</div>
+        <div class="chip" data-val="rheumatoid arthritis">Rheumatoid Arthritis</div>
+        <div class="chip" data-val="Crohn disease">Crohn's Disease</div>
+        <div class="chip" data-val="prostate cancer">Prostate Cancer</div>
+      </div>
+
+      <p class="wz-label">Or describe it yourself</p>
+      <input class="wz-input" id="condition-input" type="text" placeholder="e.g. non-small cell lung cancer, atrial fibrillation…" autocomplete="off" />
+
+      <div class="wz-nav">
+        <div></div>
+        <button class="btn-next" id="step1-next" disabled>Next: Your Location →</button>
+      </div>
+      <div class="skip-link"><a href="{{ url_for('index') }}">Skip wizard and search manually</a></div>
+    </div>
+
+    <!-- ═══════ STEP 2: Location ═══════ -->
+    <div class="step-panel" id="step-2">
+      <div class="wizard-title">Where are you located?</div>
+      <div class="wizard-sub">We'll rank trials by distance to the nearest site.</div>
+
+      <p class="wz-label">City or postcode</p>
+      <div class="loc-row">
+        <input class="wz-input" id="location-input" type="text" placeholder="e.g. Paris, New York, 10001…" autocomplete="off" />
+        <button class="loc-detect-btn" id="detect-loc-btn">📍 Detect</button>
+      </div>
+      <div id="loc-status" style="font-size:.8rem;color:#58a6ff;margin-top:.4rem;min-height:1.2rem;"></div>
+
+      <div class="wz-nav">
+        <button class="btn-back" id="step2-back">← Back</button>
+        <button class="btn-next" id="step2-next" disabled>Next: Your Profile →</button>
+      </div>
+    </div>
+
+    <!-- ═══════ STEP 3: Profile ═══════ -->
+    <div class="step-panel" id="step-3">
+      <div class="wizard-title">Tell us a bit about yourself</div>
+      <div class="wizard-sub">This helps Gemini AI check your eligibility for each trial.</div>
+
+      <!-- Upload zone -->
+      <div class="upload-zone" id="upload-zone">
+        <div class="upload-icon">📄</div>
+        <p><strong style="color:#c9d1d9;">Upload your medical records</strong></p>
+        <p>Gemini will extract your profile automatically</p>
+        <p class="upload-hint">PDF, PNG or JPG · max 10 MB</p>
+        <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg" style="display:none" />
+      </div>
+      <div class="upload-status" id="upload-status"></div>
+
+      <!-- Extracted profile summary -->
+      <div class="profile-summary" id="profile-summary"></div>
+
+      <!-- Manual toggle -->
+      <span class="manual-toggle" id="manual-toggle">✏️ Enter details manually instead</span>
+
+      <!-- Manual fields -->
+      <div class="manual-fields" id="manual-fields">
+        <div class="row-2">
+          <div>
+            <p class="wz-label">Birth year</p>
+            <input class="wz-input" id="m-birthyear" type="number" min="1900" max="2010" placeholder="e.g. 1978" />
+          </div>
+          <div>
+            <p class="wz-label">Sex</p>
+            <select class="wz-input" id="m-sex">
+              <option value="">Select…</option>
+              <option value="MALE">Male</option>
+              <option value="FEMALE">Female</option>
+              <option value="OTHER">Other / Prefer not to say</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-bottom:.75rem;">
+          <p class="wz-label">Primary diagnosis</p>
+          <input class="wz-input" id="m-diagnosis" type="text" placeholder="e.g. Stage IIIA NSCLC" />
+        </div>
+        <div style="margin-bottom:.75rem;">
+          <p class="wz-label">Current medications / prior treatments <span style="color:#484f58;font-weight:400;">(optional)</span></p>
+          <input class="wz-input" id="m-treatments" type="text" placeholder="e.g. Carboplatin, Pembrolizumab" />
+        </div>
+        <div style="margin-bottom:.75rem;">
+          <p class="wz-label">Other conditions / comorbidities <span style="color:#484f58;font-weight:400;">(optional)</span></p>
+          <input class="wz-input" id="m-comorbidities" type="text" placeholder="e.g. Type 2 Diabetes, Hypertension" />
+        </div>
+      </div>
+
+      <div class="wz-nav">
+        <button class="btn-back" id="step3-back">← Back</button>
+        <button class="btn-next" id="step3-next">Find My Trials →</button>
+      </div>
+      <div class="skip-link"><a href="#" id="skip-profile">Skip — search without eligibility matching</a></div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  condition: '',
+  lat: null, lon: null, locationLabel: '',
+  profile: null   // will be set from upload or manual
+};
+
+// ── Utility ────────────────────────────────────────────────────────────────
+function goToStep(n) {
+  document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`step-${n}`).classList.add('active');
+  [1,2,3].forEach(i => {
+    const dot  = document.getElementById(`dot-${i}`);
+    const line = document.getElementById(`line-${i}`);
+    dot.classList.remove('active','complete');
+    if (line) line.classList.remove('complete');
+    if (i < n)  { dot.classList.add('complete'); if (line) line.classList.add('complete'); }
+    if (i === n) dot.classList.add('active');
+  });
+}
+
+// ── STEP 1 ─────────────────────────────────────────────────────────────────
+const condInput = document.getElementById('condition-input');
+const step1Next = document.getElementById('step1-next');
+
+function updateStep1() {
+  step1Next.disabled = !state.condition.trim();
+}
+
+document.querySelectorAll('.chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    state.condition = chip.dataset.val;
+    condInput.value = '';
+    updateStep1();
+  });
+});
+
+condInput.addEventListener('input', () => {
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  state.condition = condInput.value.trim();
+  updateStep1();
+});
+
+step1Next.addEventListener('click', () => { if (state.condition) goToStep(2); });
+
+// ── STEP 2 ─────────────────────────────────────────────────────────────────
+const locInput  = document.getElementById('location-input');
+const locStatus = document.getElementById('loc-status');
+const step2Next = document.getElementById('step2-next');
+const step2Back = document.getElementById('step2-back');
+const detectBtn = document.getElementById('detect-loc-btn');
+
+function setLocationReady(lat, lon, label) {
+  state.lat = lat; state.lon = lon; state.locationLabel = label;
+  locStatus.textContent = `📍 ${label}`;
+  step2Next.disabled = false;
+}
+
+detectBtn.addEventListener('click', () => {
+  locStatus.textContent = 'Detecting…';
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      setLocationReady(pos.coords.latitude, pos.coords.longitude, `${pos.coords.latitude.toFixed(3)}, ${pos.coords.longitude.toFixed(3)}`);
+      locInput.value = 'Current location';
+    },
+    () => { locStatus.textContent = 'Could not detect — please type your city.'; }
+  );
+});
+
+locInput.addEventListener('keydown', async (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    await geocodeInputLocation();
+  }
+});
+
+locInput.addEventListener('blur', geocodeInputLocation);
+
+async function geocodeInputLocation() {
+  const q = locInput.value.trim();
+  if (!q || q === 'Current location') return;
+  locStatus.textContent = 'Looking up…';
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`);
+    const d = await r.json();
+    if (d && d.length > 0) {
+      setLocationReady(parseFloat(d[0].lat), parseFloat(d[0].lon), d[0].display_name.split(',').slice(0,2).join(',').trim());
+    } else {
+      locStatus.textContent = '⚠️ Location not found. Try a different city name.';
+    }
+  } catch { locStatus.textContent = '⚠️ Geocoding error.'; }
+}
+
+step2Back.addEventListener('click', () => goToStep(1));
+step2Next.addEventListener('click', () => { if (state.lat) goToStep(3); });
+
+// ── STEP 3 ─────────────────────────────────────────────────────────────────
+const uploadZone   = document.getElementById('upload-zone');
+const fileInput    = document.getElementById('file-input');
+const uploadStatus = document.getElementById('upload-status');
+const profileSum   = document.getElementById('profile-summary');
+const manualToggle = document.getElementById('manual-toggle');
+const manualFields = document.getElementById('manual-fields');
+const step3Back    = document.getElementById('step3-back');
+const step3Next    = document.getElementById('step3-next');
+const skipProfile  = document.getElementById('skip-profile');
+
+step3Back.addEventListener('click', () => goToStep(2));
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault(); uploadZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) handleFileUpload(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFileUpload(fileInput.files[0]); });
+
+async function handleFileUpload(file) {
+  uploadStatus.className = 'upload-status loading';
+  uploadStatus.textContent = '⏳ Gemini is reading your document…';
+  profileSum.classList.remove('visible');
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/api/upload_profile', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.patient_profile) {
+      state.profile = d.patient_profile;
+      uploadStatus.className = 'upload-status success';
+      uploadStatus.textContent = '✅ Profile extracted successfully!';
+      renderProfileSummary(d.patient_profile);
+      // Pre-fill manual fields too
+      if (d.patient_profile.age)       document.getElementById('m-birthyear').value = new Date().getFullYear() - d.patient_profile.age;
+      if (d.patient_profile.sex)       document.getElementById('m-sex').value = d.patient_profile.sex.toUpperCase();
+      if (d.patient_profile.diagnosis) document.getElementById('m-diagnosis').value = d.patient_profile.diagnosis;
+    } else {
+      uploadStatus.className = 'upload-status error';
+      uploadStatus.textContent = '❌ ' + (d.error || 'Could not extract profile.');
+    }
+  } catch {
+    uploadStatus.className = 'upload-status error';
+    uploadStatus.textContent = '❌ Upload failed. Please try again or enter details manually.';
+  }
+}
+
+function renderProfileSummary(p) {
+  const rows = [
+    ['Age',        p.age       ? `${p.age} years` : null],
+    ['Sex',        p.sex       || null],
+    ['Diagnosis',  p.diagnosis || null],
+    ['Treatments', Array.isArray(p.prior_treatments) ? p.prior_treatments.join(', ') : (p.prior_treatments || null)],
+    ['Comorbidities', Array.isArray(p.comorbidities) ? p.comorbidities.join(', ') : (p.comorbidities || null)],
+  ].filter(r => r[1]);
+  if (!rows.length) return;
+  profileSum.innerHTML = rows.map(r =>
+    `<div class="ps-row"><span>${r[0]}</span><span class="ps-val">${r[1]}</span></div>`
+  ).join('');
+  profileSum.classList.add('visible');
+}
+
+manualToggle.addEventListener('click', () => {
+  manualFields.classList.toggle('open');
+  manualToggle.textContent = manualFields.classList.contains('open')
+    ? '✕ Hide manual entry'
+    : '✏️ Enter details manually instead';
+});
+
+function collectManualProfile() {
+  const by  = document.getElementById('m-birthyear').value.trim();
+  const sex = document.getElementById('m-sex').value;
+  const dx  = document.getElementById('m-diagnosis').value.trim();
+  const tx  = document.getElementById('m-treatments').value.trim();
+  const cmb = document.getElementById('m-comorbidities').value.trim();
+  if (!by && !sex && !dx) return null;
+  return {
+    age:               by  ? new Date().getFullYear() - parseInt(by) : undefined,
+    sex:               sex || undefined,
+    diagnosis:         dx  || undefined,
+    prior_treatments:  tx  ? tx.split(',').map(s=>s.trim()).filter(Boolean) : undefined,
+    comorbidities:     cmb ? cmb.split(',').map(s=>s.trim()).filter(Boolean) : undefined,
+  };
+}
+
+async function launchSearch(profile) {
+  // Save profile to session if we have one
+  if (profile) {
+    try {
+      await fetch('/api/apply_medical_profile', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(profile)
+      });
+    } catch {}
+  }
+  // Redirect to main search with the condition + lat/lon as params
+  const params = new URLSearchParams({
+    query: state.condition,
+    lat:   state.lat,
+    lon:   state.lon
+  });
+  window.location.href = `/?${params.toString()}`;
+}
+
+step3Next.addEventListener('click', async () => {
+  step3Next.disabled = true;
+  step3Next.textContent = 'Launching…';
+  const profile = state.profile || collectManualProfile();
+  await launchSearch(profile);
+});
+
+skipProfile.addEventListener('click', async (e) => {
+  e.preventDefault();
+  await launchSearch(null);
+});
+</script>
+{% endblock %}

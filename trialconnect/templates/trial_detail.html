@@ -1,0 +1,271 @@
+{% extends "layout.html" %}
+
+{% block title %}{{ trial.title or nct_id }} — TrialConnect{% endblock %}
+
+{% block content %}
+<style>
+.trial-hero {
+  background: linear-gradient(180deg, #0d1117 0%, #161b22 100%);
+  border-bottom: 1px solid #21262d;
+  padding: 3rem 0 2rem;
+}
+.trial-hero h1 { color: #f0f6fc; font-size: 1.55rem; font-weight: 700; line-height: 1.35; }
+.trial-hero .meta { color: #8b949e; font-size: .9rem; margin-top: .6rem; }
+.status-pill {
+  display: inline-block;
+  padding: .25rem .75rem;
+  border-radius: 50px;
+  font-size: .78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.status-recruiting     { background: rgba(63,185,80,.15);  color: #3fb950; border: 1px solid #238636; }
+.status-completed      { background: rgba(88,166,255,.12); color: #58a6ff; border: 1px solid #1f6feb; }
+.status-not-recruiting { background: rgba(210,153,34,.12); color: #d29922; border: 1px solid #9e6a03; }
+.status-other          { background: rgba(139,148,158,.1); color: #8b949e; border: 1px solid #30363d; }
+
+.section-card {
+  background: #161b22;
+  border: 1px solid #21262d;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.25rem;
+}
+.section-card h3 { color: #f0f6fc; font-size: 1rem; font-weight: 700; margin-bottom: 1rem; }
+
+.eligibility-block {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  font-size: .88rem;
+  color: #c9d1d9;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+}
+
+.match-result-box {
+  border-radius: 10px;
+  padding: 1.2rem 1.4rem;
+  margin-bottom: 1.25rem;
+  display: none;
+}
+.match-result-box.match    { background: rgba(63,185,80,.08);  border: 1px solid #238636; }
+.match-result-box.partial  { background: rgba(210,153,34,.08); border: 1px solid #9e6a03; }
+.match-result-box.no-match { background: rgba(248,81,73,.08);  border: 1px solid #da3633; }
+.match-result-box .verdict-label { font-size: 1rem; font-weight: 700; margin-bottom: .4rem; }
+.match-result-box .verdict-reason { font-size: .88rem; color: #8b949e; line-height: 1.6; }
+.match-result-box .conf-badge {
+  display: inline-block;
+  background: rgba(255,255,255,.07);
+  border-radius: 50px;
+  padding: .15rem .6rem;
+  font-size: .75rem;
+  margin-left: .4rem;
+  vertical-align: middle;
+}
+
+.location-item {
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+  padding: .6rem 0;
+  border-bottom: 1px solid #21262d;
+  font-size: .88rem;
+  color: #c9d1d9;
+}
+.location-item:last-child { border-bottom: none; }
+.location-item .loc-icon { color: #58a6ff; flex-shrink: 0; margin-top: 2px; }
+
+.cta-check-btn {
+  background: #1f6feb;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  padding: .65rem 1.6rem;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .2s;
+  width: 100%;
+  margin-top: .75rem;
+}
+.cta-check-btn:hover { background: #388bfd; }
+.cta-check-btn:disabled { background: #21262d; color: #484f58; }
+
+.ctgov-link {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  color: #58a6ff;
+  text-decoration: none;
+  font-size: .88rem;
+  font-weight: 600;
+}
+.ctgov-link:hover { color: #388bfd; }
+</style>
+
+<div class="trial-hero">
+  <div class="container">
+    <a href="javascript:history.back()" style="color:#8b949e;font-size:.85rem;text-decoration:none;">← Back to results</a>
+    <h1 class="mt-3">{{ trial.title or nct_id }}</h1>
+    <div class="meta d-flex flex-wrap align-items-center gap-2 mt-2">
+      {% set s = (trial.status or '') | upper %}
+      {% if 'RECRUITING' in s and 'NOT' not in s %}
+        <span class="status-pill status-recruiting">Recruiting</span>
+      {% elif 'COMPLETED' in s %}
+        <span class="status-pill status-completed">Completed</span>
+      {% elif 'NOT_YET' in s or 'NOT YET' in s %}
+        <span class="status-pill status-not-recruiting">Not Yet Recruiting</span>
+      {% else %}
+        <span class="status-pill status-other">{{ trial.status or 'Unknown' }}</span>
+      {% endif %}
+      <span>NCT ID: <strong style="color:#c9d1d9;">{{ nct_id }}</strong></span>
+      <a class="ctgov-link" href="https://clinicaltrials.gov/study/{{ nct_id }}" target="_blank">
+        View on ClinicalTrials.gov ↗
+      </a>
+    </div>
+  </div>
+</div>
+
+<div class="container py-4">
+  <div class="row gx-4">
+
+    <!-- ── Left column ── -->
+    <div class="col-lg-7">
+
+      <!-- Conditions -->
+      {% if trial.conditions_str or trial.conditions %}
+      <div class="section-card">
+        <h3>🏷️ Conditions</h3>
+        <p style="color:#c9d1d9;margin:0;">{{ trial.conditions_str or trial.conditions }}</p>
+      </div>
+      {% endif %}
+
+      <!-- Eligibility -->
+      {% if trial.eligibility_criteria %}
+      <div class="section-card">
+        <h3>📋 Eligibility Criteria</h3>
+        <div class="eligibility-block">{{ trial.eligibility_criteria }}</div>
+
+        <!-- AI match result placeholder -->
+        <div class="match-result-box" id="match-result-box">
+          <div class="verdict-label" id="verdict-label"></div>
+          <div class="verdict-reason" id="verdict-reason"></div>
+        </div>
+
+        {% if session.get('user') %}
+          <button class="cta-check-btn" id="check-match-btn">✨ Check My Eligibility with Gemini AI</button>
+        {% else %}
+          <a href="{{ url_for('login') }}" class="cta-check-btn d-block text-center text-decoration-none" style="line-height:1.8;">
+            Log in to check your eligibility
+          </a>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <!-- Interventions -->
+      {% if trial.interventions %}
+      <div class="section-card">
+        <h3>💊 Interventions</h3>
+        <ul style="color:#c9d1d9;padding-left:1.2rem;margin:0;">
+          {% for iv in trial.interventions[:10] %}
+          <li style="margin-bottom:.3rem;">
+            {% if iv is mapping %}
+              <strong>{{ iv.get('type','') }}</strong>{% if iv.get('name') %}: {{ iv.name }}{% endif %}
+            {% else %}
+              {{ iv }}
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+    </div>
+
+    <!-- ── Right column ── -->
+    <div class="col-lg-5">
+
+      <!-- Locations -->
+      {% if trial.locations %}
+      <div class="section-card">
+        <h3>📍 Trial Locations <span style="color:#8b949e;font-weight:400;font-size:.85rem;">({{ trial.locations|length }})</span></h3>
+        <div style="max-height:320px;overflow-y:auto;">
+          {% for loc in trial.locations[:20] %}
+          <div class="location-item">
+            <span class="loc-icon">📌</span>
+            <div>
+              {% if loc.facility %}<strong>{{ loc.facility }}</strong><br>{% endif %}
+              {% if loc.city %}<span>{{ loc.city }}{% if loc.state %}, {{ loc.state }}{% endif %}{% if loc.country %}, {{ loc.country }}{% endif %}</span>{% endif %}
+            </div>
+          </div>
+          {% endfor %}
+          {% if trial.locations|length > 20 %}
+          <p style="color:#484f58;font-size:.8rem;text-align:center;margin-top:.5rem;">+{{ trial.locations|length - 20 }} more locations on ClinicalTrials.gov</p>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Summary / phases etc from CT.gov -->
+      <div class="section-card">
+        <h3>ℹ️ Quick Facts</h3>
+        <table style="width:100%;font-size:.87rem;color:#c9d1d9;">
+          <tbody id="quick-facts">
+            <tr><td style="color:#8b949e;padding:.3rem 0;">NCT ID</td><td style="text-align:right;">{{ nct_id }}</td></tr>
+            {% if trial.status %}<tr><td style="color:#8b949e;padding:.3rem 0;">Status</td><td style="text-align:right;">{{ trial.status.replace('_',' ') }}</td></tr>{% endif %}
+          </tbody>
+        </table>
+      </div>
+
+      <a href="/onboard" class="cta-check-btn d-block text-center text-decoration-none" style="background:#238636;">
+        🔍 Find More Trials Like This
+      </a>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if session.get('user') %}
+<script>
+const NCT_ID = {{ nct_id | tojson }};
+const checkBtn = document.getElementById('check-match-btn');
+const resultBox = document.getElementById('match-result-box');
+const verdictLabel = document.getElementById('verdict-label');
+const verdictReason = document.getElementById('verdict-reason');
+
+if (checkBtn) {
+  checkBtn.addEventListener('click', async () => {
+    checkBtn.disabled = true;
+    checkBtn.textContent = '⏳ Gemini is checking your eligibility…';
+    try {
+      const r = await fetch(`/api/check_match/${NCT_ID}`);
+      const d = await r.json();
+      const v = (d.verdict || d.status || '').toUpperCase();
+      resultBox.className = 'match-result-box ';
+      let icon = '', color = '';
+      if (v === 'MATCH')         { icon='✅ Likely Eligible';   resultBox.classList.add('match');    }
+      else if (v === 'PARTIAL_MATCH') { icon='🔶 Possibly Eligible'; resultBox.classList.add('partial');  }
+      else if (v === 'NO_MATCH') { icon='❌ Likely Ineligible'; resultBox.classList.add('no-match'); }
+      else                       { icon='ℹ️ Result';             resultBox.classList.add('partial');  }
+      const conf = d.confidence ? `<span class="conf-badge">${d.confidence}% confidence</span>` : '';
+      verdictLabel.innerHTML = icon + conf;
+      verdictReason.textContent = d.plain_english_summary || d.reason || 'No further details available.';
+      resultBox.style.display = 'block';
+      checkBtn.style.display = 'none';
+    } catch {
+      checkBtn.disabled = false;
+      checkBtn.textContent = '✨ Check My Eligibility with Gemini AI';
+    }
+  });
+}
+</script>
+{% endif %}
+{% endblock %}
