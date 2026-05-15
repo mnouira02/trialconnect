@@ -10,14 +10,57 @@
         <div class="row gx-5 align-items-center justify-content-center">
             <div class="col-lg-8 col-xl-7 col-xxl-6">
                 <div class="my-5 text-center text-xl-start">
-                    <h1 class="display-5 fw-bolder text-white mb-2">Find Your Trial</h1>
-                    <p class="lead fw-normal text-white-50 mb-4">Enter a condition, study ID, city, or keyword to find clinical trials near you.</p>
-                    <form method="GET" action="{{ url_for('index') }}">
-                        <div class="input-group input-group-lg">
-                            <input class="form-control" type="text" name="query" placeholder="e.g., Asthma, NCT04516746, London" value="{{ query or '' }}" />
-                            <button class="btn btn-primary" type="submit">Search</button>
+                    <h1 class="display-5 fw-bolder text-white mb-2">Find Your Clinical Trial</h1>
+                    <p class="lead fw-normal text-white-50 mb-4">
+                        Answer 4 quick questions and our AI will match you to the most relevant trials near you — in seconds.
+                    </p>
+
+                    <!-- PRIMARY CTA: guided wizard -->
+                    <div class="d-flex flex-column flex-sm-row gap-3 mb-4">
+                        <a href="{{ url_for('onboarding') }}" class="btn btn-primary btn-lg rounded-pill px-4 fw-semibold">
+                            🔍 Find My Trials &nbsp;<span class="badge bg-white text-primary ms-1" style="font-size:.75rem;">Guided</span>
+                        </a>
+                        <button class="btn btn-outline-light btn-lg rounded-pill px-4"
+                                type="button"
+                                data-bs-toggle="collapse"
+                                data-bs-target="#quickSearchCollapse"
+                                aria-expanded="false">
+                            Quick Search
+                        </button>
+                    </div>
+
+                    <!-- Quick search (collapsed by default, auto-expanded if ?query= present) -->
+                    <div class="collapse {% if query %}show{% endif %}" id="quickSearchCollapse">
+                        <form method="GET" action="{{ url_for('index') }}">
+                            <div class="input-group input-group-lg">
+                                <input class="form-control" type="text" name="query"
+                                       placeholder="e.g., Lung Cancer, NCT04516746, London"
+                                       value="{{ query or '' }}" />
+                                <button class="btn btn-primary" type="submit">Search</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live stats widget -->
+            <div class="col-lg-4 d-none d-lg-flex justify-content-end">
+                <div id="stats-widget" class="rounded-4 p-4 text-white text-center" style="background:rgba(255,255,255,.08);min-width:230px;">
+                    <div class="mb-3 opacity-50 small text-uppercase fw-semibold">Platform Stats</div>
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <div class="h3 fw-bold mb-0" id="stat-trials">—</div>
+                            <div class="small opacity-75">Trials</div>
                         </div>
-                    </form>
+                        <div class="col-6">
+                            <div class="h3 fw-bold mb-0" id="stat-recruiting">—</div>
+                            <div class="small opacity-75">Recruiting</div>
+                        </div>
+                        <div class="col-12">
+                            <div class="h3 fw-bold mb-0" id="stat-conditions">—</div>
+                            <div class="small opacity-75">Conditions covered</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -48,49 +91,43 @@
 {% endblock %}
 
 {% block scripts %}
+<!-- Load live stats on every page load -->
+<script>
+(async function loadStats() {
+    try {
+        const r = await fetch('/api/stats');
+        const d = await r.json();
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val.toLocaleString(); };
+        set('stat-trials',      d.total_trials     || 0);
+        set('stat-recruiting',  d.recruiting        || 0);
+        set('stat-conditions',  d.conditions_covered|| 0);
+    } catch(e) {}
+})();
+</script>
+
 {% if query %}
 <style>
 .gemini-checking {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border-radius: 50px;
-    background: rgba(66,133,244,0.08);
-    border: 1px solid rgba(66,133,244,0.25);
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: #4285f4;
-    margin-bottom: 8px;
-    margin-right: 8px;
-    vertical-align: middle;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 50px;
+    background: rgba(66,133,244,0.08); border: 1px solid rgba(66,133,244,0.25);
+    font-size: 0.78rem; font-weight: 600; color: #4285f4;
+    margin-bottom: 8px; margin-right: 8px; vertical-align: middle;
 }
-.gemini-checking .gemini-icon {
-    animation: gemini-spin 1.2s linear infinite;
-    width: 18px;
-    height: 18px;
-    flex-shrink: 0;
-}
+.gemini-checking .gemini-icon { animation: gemini-spin 1.2s linear infinite; width: 18px; height: 18px; flex-shrink: 0; }
 @keyframes gemini-spin {
-    0%   { transform: rotate(0deg);   opacity: 1;    }
-    25%  { transform: rotate(90deg);  opacity: 0.6;  }
-    50%  { transform: rotate(180deg); opacity: 1;    }
-    75%  { transform: rotate(270deg); opacity: 0.6;  }
-    100% { transform: rotate(360deg); opacity: 1;    }
+    0%   { transform: rotate(0deg);   opacity: 1;   }
+    25%  { transform: rotate(90deg);  opacity: 0.6; }
+    50%  { transform: rotate(180deg); opacity: 1;   }
+    75%  { transform: rotate(270deg); opacity: 0.6; }
+    100% { transform: rotate(360deg); opacity: 1;   }
 }
 .match-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border-radius: 50px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    margin-bottom: 8px;
-    margin-right: 8px;
-    cursor: pointer;
-    position: relative;
-    transition: filter 0.15s;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 50px;
+    font-size: 0.78rem; font-weight: 600;
+    margin-bottom: 8px; margin-right: 8px;
+    cursor: pointer; position: relative; transition: filter 0.15s;
 }
 .match-badge:hover { filter: brightness(0.92); }
 .match-badge.match    { background:#d1fae5; border:1px solid #10b981; color:#065f46; }
@@ -99,22 +136,12 @@
 .match-badge.unknown  { background:#f3f4f6; border:1px solid #9ca3af; color:#374151; }
 .match-badge .gemini-icon { width:16px; height:16px; flex-shrink:0; }
 .match-reason-box {
-    display: none;
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 999;
-    background: #1e293b;
-    color: #f8fafc;
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 0.8rem;
-    font-weight: 400;
-    line-height: 1.5;
-    max-width: 340px;
-    min-width: 200px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
-    white-space: normal;
+    display: none; position: absolute; top: calc(100% + 6px); left: 0;
+    z-index: 999; background: #1e293b; color: #f8fafc;
+    border-radius: 8px; padding: 10px 14px;
+    font-size: 0.8rem; font-weight: 400; line-height: 1.5;
+    max-width: 340px; min-width: 200px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.25); white-space: normal;
 }
 .match-badge:hover .match-reason-box,
 .match-badge:focus .match-reason-box { display: block; }
@@ -313,6 +340,8 @@
                        <span class="h4 d-block mb-0">${Math.round(study.closest_distance_km)}</span>
                        <span class="text-muted small">km</span>
                    </div>` : '';
+
+            // Trial title links to detail page (not external CT.gov)
             html += `
             <div class="col-12 mb-4">
               <div class="${cardClasses}">
@@ -320,7 +349,7 @@
                   <div class="flex-grow-1">
                     ${matchBadgeHTML}${promotedBadgeHTML}${statusBadgeHTML}
                     <a class="text-decoration-none link-dark stretched-link"
-                       href="https://clinicaltrials.gov/study/${study.nctId}" target="_blank">
+                       href="/trial/${study.nctId}">
                       <h5 class="card-title mb-3">${study.title}</h5>
                     </a>
                     <p class="card-text mb-0"><strong>Conditions:</strong> ${study.conditions}</p>
@@ -348,7 +377,6 @@
 
         studies.forEach(study => {
             (study.locations || []).forEach(location => {
-                // Robust extraction: handle geoPoint object, flat lat/lon, or missing coords
                 let lat, lon;
                 if (location.geoPoint && location.geoPoint.lat != null && location.geoPoint.lon != null) {
                     lat = parseFloat(location.geoPoint.lat);
@@ -356,58 +384,32 @@
                 } else if (location.lat != null && location.lon != null) {
                     lat = parseFloat(location.lat);
                     lon = parseFloat(location.lon);
-                } else {
-                    return; // skip location with no coords
-                }
+                } else { return; }
                 if (isNaN(lat) || isNaN(lon)) return;
                 if (haversine(centerLat, centerLon, lat, lon) > searchRadiusKM) return;
-
                 const key = `${lat},${lon}`;
                 if (!locationsMap[key]) {
-                    locationsMap[key] = {
-                        position: { lat, lng: lon },
-                        facility: location.facility || 'N/A',
-                        studies: []
-                    };
+                    locationsMap[key] = { position: { lat, lng: lon }, facility: location.facility || 'N/A', studies: [] };
                 }
-                locationsMap[key].studies.push({
-                    title: study.title,
-                    nctId: study.nctId,
-                    status: (study.status || '').replace(/_/g, ' ')
-                });
+                locationsMap[key].studies.push({ title: study.title, nctId: study.nctId, status: (study.status || '').replace(/_/g, ' ') });
             });
         });
 
         Object.values(locationsMap).forEach(locGroup => {
             locGroup.studies.sort((a,b) => a.title.localeCompare(b.title));
-            let markerIcon = {
-                path: google.maps.SymbolPath.CIRCLE,
-                scale: 7,
-                fillColor: "#42a5f5",
-                fillOpacity: 1,
-                strokeColor: "white",
-                strokeWeight: 1.5
-            };
-            if (locGroup.studies.length > 1) {
-                markerIcon.scale = 10;
-                markerIcon.fillColor = "#0D47A1";
-            }
-            const marker = new google.maps.Marker({
-                position: locGroup.position, map, icon: markerIcon
-            });
+            let markerIcon = { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: "#42a5f5", fillOpacity: 1, strokeColor: "white", strokeWeight: 1.5 };
+            if (locGroup.studies.length > 1) { markerIcon.scale = 10; markerIcon.fillColor = "#0D47A1"; }
+            const marker = new google.maps.Marker({ position: locGroup.position, map, icon: markerIcon });
             markerList.push(marker);
             if (locGroup.studies.length > 1) {
-                marker.setLabel({
-                    text: locGroup.studies.length.toString(),
-                    color: "white", fontWeight: "bold", fontSize: "11px"
-                });
+                marker.setLabel({ text: locGroup.studies.length.toString(), color: "white", fontWeight: "bold", fontSize: "11px" });
             }
             marker.addListener('click', () => {
-                let c = `<div style="min-width:320px;max-height:240px;overflow-y:auto;padding:0;color:#212529;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">`;
-                c += `<div style="padding:1rem;background:#f7f7f7;border-bottom:1px solid #dee2e6;"><h6 style="font-weight:700;margin:0;font-size:1.1rem;">${locGroup.facility}</h6><span style="font-size:.9rem;color:#6c757d;">${locGroup.studies.length} trial(s) at this location</span></div><div style="padding:1rem;">`;
+                let c = `<div style="min-width:320px;max-height:240px;overflow-y:auto;padding:0;color:#212529;">`;
+                c += `<div style="padding:1rem;background:#f7f7f7;border-bottom:1px solid #dee2e6;"><h6 style="font-weight:700;margin:0;">${locGroup.facility}</h6><span style="font-size:.9rem;color:#6c757d;">${locGroup.studies.length} trial(s)</span></div><div style="padding:1rem;">`;
                 locGroup.studies.forEach((study, i) => {
                     const border = i < locGroup.studies.length-1 ? 'border-bottom:1px solid #eee;' : '';
-                    c += `<div style="margin-bottom:1rem;padding-bottom:1rem;${border}"><a href="https://clinicaltrials.gov/study/${study.nctId}" target="_blank" style="font-size:1rem;font-weight:600;color:#212529;text-decoration:none;">${study.title}</a><br><span style="font-size:.85rem;color:#6c757d;">NCT ID: ${study.nctId}</span></div>`;
+                    c += `<div style="margin-bottom:1rem;padding-bottom:1rem;${border}"><a href="/trial/${study.nctId}" style="font-size:1rem;font-weight:600;color:#212529;text-decoration:none;">${study.title}</a><br><span style="font-size:.85rem;color:#6c757d;">NCT ID: ${study.nctId}</span></div>`;
                 });
                 c += `</div></div>`;
                 infoWindow.setContent(c);
@@ -417,12 +419,8 @@
         });
 
         if (isInitialLoad) {
-            if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
-                map.setCenter(bounds.getCenter());
-                map.setZoom(11);
-            } else {
-                map.fitBounds(bounds);
-            }
+            if (bounds.getNorthEast().equals(bounds.getSouthWest())) { map.setCenter(bounds.getCenter()); map.setZoom(11); }
+            else { map.fitBounds(bounds); }
         }
     }
 
@@ -431,14 +429,12 @@
         map = new google.maps.Map(document.getElementById('map'), {
             center: { lat: centerLat, lng: centerLon }, zoom: defaultZoom, styles: mapStyle,
             gestureHandling: "cooperative", zoomControl: true, mapTypeControl: false,
-            scaleControl: false, streetViewControl: false, rotateControl: false,
-            fullscreenControl: false,
+            scaleControl: false, streetViewControl: false, rotateControl: false, fullscreenControl: false,
             zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM }
         });
         infoWindow = new google.maps.InfoWindow();
         new google.maps.Marker({
-            position: { lat: centerLat, lng: centerLon }, map,
-            title: "Your Location",
+            position: { lat: centerLat, lng: centerLon }, map, title: "Your Location",
             icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: "white", fillOpacity: 1, strokeColor: "#4285F4", strokeWeight: 2 }
         });
         const searchAreaButton = document.createElement("button");
