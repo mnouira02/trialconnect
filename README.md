@@ -1,36 +1,66 @@
 # TrialConnect 🧬
 
-**AI-powered clinical trial matching for patients who need it most.**
+**AI-powered clinical trial matching — from symptom to study in under 60 seconds.**
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Cloud%20Run-blue)](https://trialconnect-404183020569.us-central1.run.app)
 [![Built With](https://img.shields.io/badge/Built%20With-MongoDB%20%2B%20GCP-green)](https://github.com/mnouira02/trialconnect)
+[![Onboarding](https://img.shields.io/badge/Try%20It-Guided%20Wizard-purple)](https://trialconnect-404183020569.us-central1.run.app/onboarding)
 
-> Built for the MongoDB + Google Cloud Hackathon 2025
+> Built for the **MongoDB + Google Cloud Hackathon 2025**
 
 ---
 
 ## 🌍 The Problem
 
-Over 80% of clinical trials fail to meet enrollment targets, while millions of patients who could benefit never find out they qualify. The gap between patients and trials is a navigation problem — not a supply problem.
+Over **80% of clinical trials fail to meet enrollment targets**, while millions of patients who qualify never find out they’re eligible. The gap between patients and trials is a *navigation problem* — not a supply problem.
+
+Traditional search requires patients to know the right medical jargon, wade through dense eligibility criteria, and manually contact study coordinators. Most give up.
+
+---
 
 ## 💡 The Solution
 
-TrialConnect is a full-stack web platform that uses AI to match patients to relevant clinical trials based on their condition, location, medical history, and eligibility criteria — in seconds.
+TrialConnect is a **guided AI concierge** that takes a patient from “I have lung cancer” to “Here are 12 trials you likely qualify for, ranked by distance” — in under 60 seconds.
 
-**Live at:** https://trialconnect-404183020569.us-central1.run.app
+**➡️ [Try the live demo →](https://trialconnect-404183020569.us-central1.run.app/onboarding)**
 
 ---
 
 ## ✨ Key Features
 
-- **Semantic Trial Search** — MongoDB Atlas vector search finds trials by meaning, not just keywords
-- **AI Eligibility Matching** — Gemini 1.5 Pro analyzes trial inclusion/exclusion criteria against your profile
-- **Medical Document Upload** — Upload a PDF/image of your medical records; Gemini extracts your profile automatically
-- **Proximity Scoring** — Trials ranked by distance to nearest site using geospatial queries
-- **AI Agent** — Vertex AI Agent Builder chatbot guides patients to the right trials
-- **Promoted Trials** — Sponsor dashboard to boost trial visibility
-- **Google OAuth + Local Auth** — Secure login with remember-me support
-- **Admin Dashboard** — Full user and content management
+| Feature | Technology |
+|---|---|
+| **4-step guided onboarding wizard** | Custom wizard UI, session-backed state, auto-geocoding |
+| **Semantic trial search** | MongoDB Atlas Vector Search (`text-embedding-005`, 768 dims) |
+| **AI eligibility matching** | Gemini 2.5 Flash — analyses criteria vs. your profile |
+| **Medical document upload** | Upload PDF/image; Gemini extracts your profile automatically |
+| **Trial detail page** | Full eligibility text, location map, AI match button |
+| **Proximity scoring** | Trials ranked by Haversine distance to nearest site |
+| **AI agent chat** | Vertex AI Agent Builder chatbot on every results page |
+| **Promoted trials** | Sponsor dashboard to boost trial visibility |
+| **Live platform stats** | MongoDB aggregation pipeline — `/api/stats` |
+| **Google OAuth + local auth** | Secure login with remember-me support |
+| **Admin dashboard** | Full user and content management |
+
+---
+
+## 🔄 Guided Onboarding Flow
+
+The signature feature: a **4-step wizard** that turns a blank search box into a personalised matching experience.
+
+```
+Step 1 ─ Choose condition     (pill picker + free text)
+   ↓
+Step 2 ─ Set location         (type or use GPS + radius slider)
+   ↓
+Step 3 ─ Build your profile   (age, sex, meds + optional doc upload → Gemini extracts it)
+   ↓
+Step 4 ─ Review & launch      (confirm summary, consent tick, one button)
+   ↓
+Results ─ Ranked trials       (vector search + geospatial + AI eligibility)
+   ↓
+Detail page ─ Per trial       (eligibility criteria, location map, “Check my match”)
+```
 
 ---
 
@@ -43,18 +73,25 @@ User Browser
 Flask App (Google Cloud Run)
     │
     ├── MongoDB Atlas
+    │     ├── trials          (4 468 studies + text-embedding-005 vectors)
     │     ├── users          (accounts, profiles)
-    │     ├── trials         (indexed trial data + vectors)
+    │     ├── patient_dossiers (persistent medical profiles)
     │     ├── promoted       (sponsor-boosted trials)
     │     └── contacts       (contact form submissions)
     │
-    ├── Vertex AI / Gemini 1.5 Pro
+    ├── Vertex AI / Gemini 2.5 Flash
     │     ├── Eligibility matching
     │     ├── Medical document extraction
     │     └── Agent Builder chatbot
     │
-    └── ClinicalTrials.gov API
-          └── Live trial data source
+    ├── text-embedding-005 (Vertex AI Embeddings)
+    │     └── 768-dim vectors, cosine similarity
+    │
+    ├── ClinicalTrials.gov REST API v2
+    │     └── 26 conditions, up to 200 trials each
+    │
+    └── OpenStreetMap Nominatim
+          └── Free geocoding for onboarding wizard
 ```
 
 ---
@@ -63,15 +100,27 @@ Flask App (Google Cloud Run)
 
 | Layer | Technology |
 |---|---|
-| Frontend | HTML, Bootstrap 5, Vanilla JS |
+| Frontend | HTML, Bootstrap 5, Vanilla JS, Leaflet.js |
 | Backend | Python 3.11, Flask |
-| Database | MongoDB Atlas (vector search + geospatial) |
-| AI/ML | Google Gemini 1.5 Pro (Vertex AI) |
+| Database | MongoDB Atlas (Vector Search + Geospatial + Aggregation) |
+| AI / Embeddings | Google Gemini 2.5 Flash · text-embedding-005 (Vertex AI) |
 | Agent | Vertex AI Agent Builder |
 | Hosting | Google Cloud Run |
 | Auth | Google OAuth 2.0 + Werkzeug password hashing |
-| Data | ClinicalTrials.gov REST API |
+| Data | ClinicalTrials.gov REST API v2 |
+| Geocoding | OpenStreetMap Nominatim |
 | DevOps | Docker, Cloud Build, Artifact Registry |
+
+---
+
+## 🧠 How AI Matching Works
+
+1. **Onboarding** — Patient describes condition, location, age, sex, optionally uploads medical records
+2. **Semantic search** — MongoDB Atlas Vector Search finds trials by meaning using `text-embedding-005`
+3. **Condition boost** — Post-ranking re-scorer rewards exact condition phrase matches
+4. **Proximity scoring** — Haversine distance to nearest trial site
+5. **Gemini eligibility check** — Full inclusion/exclusion criteria analysed against the patient’s profile by Gemini 2.5 Flash
+6. **Trial detail page** — Per-trial deep view with eligibility text, location map, and match explanation
 
 ---
 
@@ -88,23 +137,33 @@ Flask App (Google Cloud Run)
 git clone https://github.com/mnouira02/trialconnect.git
 cd trialconnect
 python -m venv .venv
-.venv\Scripts\activate  # Windows
+.venv\Scripts\activate   # Windows
 source .venv/bin/activate  # Mac/Linux
 pip install -r requirements.txt
 ```
 
 ### Environment Variables
 
-Create a `.env` file in the root:
+Create a `.env` file from `.env.example`:
 
 ```env
-FLASK_SECRET_KEY=your-secret-key-here
+FLASK_SECRET_KEY=your-secret-key
 MONGODB_URI=mongodb+srv://...
 GOOGLE_CLIENT_ID=your-google-oauth-client-id
 GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
 GOOGLE_CLOUD_PROJECT=your-gcp-project-id
 VERTEX_AI_LOCATION=us-central1
 GOOGLE_MAPS_API_KEY=your-maps-api-key
+ADMIN_EMAIL=your-admin-email
+```
+
+### Seed the database
+
+```bash
+python seed_mongodb.py
+# Force re-embed (if switching embedding model):
+$env:FORCE_REEMBED="1"; python seed_mongodb.py   # PowerShell
+FORCE_REEMBED=1 python seed_mongodb.py            # bash/zsh
 ```
 
 ### Run
@@ -113,7 +172,7 @@ GOOGLE_MAPS_API_KEY=your-maps-api-key
 python run.py
 ```
 
-App runs at `http://localhost:5000`
+App at `http://localhost:5000` — start at `/onboarding` for the full guided experience.
 
 ---
 
@@ -128,12 +187,25 @@ gcloud run deploy trialconnect \
 
 ---
 
-## 🧠 How the AI Matching Works
+## 📊 Live Stats
 
-1. **Basic match** — Age and sex checked against trial inclusion criteria using rule-based logic
-2. **Semantic search** — MongoDB Atlas vector search finds trials semantically related to the patient's condition
-3. **Gemini eligibility check** — Full eligibility text fetched from ClinicalTrials.gov API and analyzed by Gemini 1.5 Pro against the patient's complete medical profile
-4. **Score** — Trials ranked by a composite score: semantic similarity + proximity + recruitment status + eligibility match
+Real-time platform metrics via MongoDB aggregation:
+
+```
+GET /api/stats
+```
+
+```json
+{
+  "total_trials": 4468,
+  "recruiting": 2341,
+  "conditions_covered": 26,
+  "top_conditions": [
+    {"condition": "Breast Cancer", "count": 200},
+    ...
+  ]
+}
+```
 
 ---
 
@@ -142,15 +214,21 @@ gcloud run deploy trialconnect \
 ```
 trialconnect/
 ├── trialconnect/
-│   ├── __init__.py        # App factory
-│   ├── routes.py          # All Flask routes + OpenAPI spec
-│   ├── oauth_setup.py     # Google OAuth configuration
-│   ├── static/            # CSS, JS, images
-│   └── templates/         # Jinja2 HTML templates
-├── helpers.py             # MongoDB, Gemini, search logic
-├── Dockerfile             # Container definition
-├── requirements.txt       # Python dependencies
-└── run.py                 # Local dev entry point
+│   ├── __init__.py          # App factory
+│   ├── routes.py            # All Flask routes
+│   ├── oauth_setup.py       # Google OAuth
+│   ├── static/              # CSS, JS, images
+│   └── templates/
+│       ├── onboarding.html    # ⭐ Guided wizard (NEW)
+│       ├── trial_detail.html  # ⭐ Trial detail page (NEW)
+│       ├── index.html         # Search + results
+│       └── …
+├── helpers.py               # MongoDB, Gemini, search logic
+├── seed_mongodb.py          # 4 468-trial seeder
+├── agent.py                 # Vertex AI agent definition
+├── Dockerfile
+├── requirements.txt
+└── run.py
 ```
 
 ---
@@ -159,10 +237,13 @@ trialconnect/
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/search` | GET | Search trials by query + location |
-| `/api/check_match/<nct_id>` | GET/POST | AI eligibility check for a trial |
-| `/api/upload_profile` | POST | Extract medical profile from document |
-| `/api/openapi.json` | GET | OpenAPI 3.0 spec for agent integration |
+| `/onboarding` | GET | **Guided 4-step wizard** (start here) |
+| `/trial/<nct_id>` | GET | Full trial detail + AI eligibility |
+| `/api/search` | GET | Vector search by condition + location |
+| `/api/stats` | GET | Live platform stats (MongoDB aggregation) |
+| `/api/check_match/<nct_id>` | GET/POST | AI eligibility check |
+| `/api/upload_profile` | POST | Gemini doc extraction |
+| `/api/openapi.json` | GET | OpenAPI 3.0 spec |
 
 ---
 

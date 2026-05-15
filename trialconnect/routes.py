@@ -47,6 +47,139 @@ def index():
     )
 
 
+# ---------------------------------------------------------------------------
+# GUIDED ONBOARDING WIZARD
+# ---------------------------------------------------------------------------
+@app.route('/onboarding')
+def onboarding():
+    """4-step guided wizard: condition → location → profile → review & launch."""
+    user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    fallback_lat, fallback_lon = get_location_from_ip(user_ip)
+    if not fallback_lat or not fallback_lon:
+        fallback_lat = 40.7128
+        fallback_lon = -74.0060
+    return render_template(
+        'onboarding.html',
+        fallback_lat=fallback_lat,
+        fallback_lon=fallback_lon
+    )
+
+
+# ---------------------------------------------------------------------------
+# TRIAL DETAIL PAGE
+# ---------------------------------------------------------------------------
+@app.route('/trial/<nct_id>')
+def trial_detail(nct_id):
+    """Full trial detail page: eligibility, map of locations, AI match button."""
+    db = get_mongo_db()
+    trial = db['trials'].find_one({'nctId': nct_id})
+    if trial:
+        trial['id'] = str(trial.pop('_id', ''))
+        # Normalise field names consistently
+        trial['nctId']  = trial.get('nctId') or nct_id
+        trial['title']  = trial.get('title') or trial.get('brief_title') or trial.get('briefTitle') or 'Unknown Title'
+        trial['status'] = trial.get('status') or trial.get('overall_status') or trial.get('overallStatus') or 'UNKNOWN'
+        trial['conditions'] = trial.get('conditions') or trial.get('conditions_str') or ''
+        # Normalise locations
+        normalised = []
+        for loc in trial.get('locations', []):
+            gp = loc.get('geoPoint') or {}
+            lat = gp.get('lat') or loc.get('lat')
+            lon = gp.get('lon') or loc.get('lon')
+            if lat and lon:
+                normalised.append({**loc, 'geoPoint': {'lat': float(lat), 'lon': float(lon)}, 'lat': float(lat), 'lon': float(lon)})
+        trial['locations'] = normalised
+        # Try to get eligibility text for display
+        try:
+            trial['eligibility_text'] = fetch_trial_eligibility_text(nct_id)
+        except Exception:
+            trial['eligibility_text'] = None
+    else:
+        # Fallback: fetch from ClinicalTrials.gov API
+        try:
+            r = requests.get(
+                f'https://clinicaltrials.gov/api/v2/studies/{nct_id}',
+                params={'format': 'json'},
+                timeout=8
+            )
+            raw = r.json()
+            proto = raw.get('protocolSection', {})
+            id_mod   = proto.get('identificationModule', {})
+            status_mod = proto.get('statusModule', {})
+            cond_mod = proto.get('conditionsModule', {})
+            elig_mod = proto.get('eligibilityModule', {})
+            contacts_mod = proto.get('contactsLocationsModule', {})
+            interv_mod   = proto.get('armsInterventionsModule', {})
+            desc_mod     = proto.get('descriptionModule', {})
+            trial = {
+                'nctId':    nct_id,
+                'title':    id_mod.get('briefTitle', 'Unknown Title'),
+                'status':   status_mod.get('overallStatus', 'UNKNOWN'),
+                'conditions': ', '.join(cond_mod.get('conditions', [])),
+                'phase':    ', '.join(proto.get('designModule', {}).get('phases', [])),
+                'sponsor':  proto.get('sponsorCollaboratorsModule', {}).get('leadSponsor', {}).get('name', ''),
+                'eligibility_text': elig_mod.get('eligibilityCriteria', ''),
+                'interventions': [
+                    iv.get('name', '') for iv in interv_mod.get('interventions', [])
+                ],
+                'contacts': [
+                    {'name': c.get('name'), 'email': c.get('email'), 'phone': c.get('phone')}
+                    for c in contacts_mod.get('centralContacts', [])
+                ],
+                'locations': [
+                    {
+                        'facility': l.get('facility', {}).get('name', ''),
+                        'city':    l.get('geoPoint', {}).get('lat') and l.get('facility', {}).get('address', {}).get('city', ''),
+                        'country': l.get('facility', {}).get('address', {}).get('country', ''),
+                        'status':  l.get('status', ''),
+                        'lat':     l.get('geoPoint', {}).get('lat'),
+                        'lon':     l.get('geoPoint', {}).get('lng'),
+                        'geoPoint': {
+                            'lat': l.get('geoPoint', {}).get('lat'),
+                            'lon': l.get('geoPoint', {}).get('lng')
+                        }
+                    }
+                    for l in contacts_mod.get('locations', [])
+                    if l.get('geoPoint')
+                ]
+            }
+        except Exception as e:
+            print(f'trial_detail fetch error: {e}')
+            abort(404)
+    return render_template('trial_detail.html', trial=trial)
+
+
+# ---------------------------------------------------------------------------
+# STATS API  (MongoDB aggregation showcase)
+# ---------------------------------------------------------------------------
+@app.route('/api/stats')
+def api_stats():
+    """Live platform stats powered by MongoDB aggregation pipeline."""
+    try:
+        db = get_mongo_db()
+        total_trials = db['trials'].count_documents({})
+        recruiting   = db['trials'].count_documents({'status': {'$regex': 'RECRUITING', '$options': 'i'}})
+        conditions_count = len(db['trials'].distinct('conditions_str'))
+
+        # Top 5 conditions by trial count
+        pipeline = [
+            {'$group': {'_id': '$conditions_str', 'count': {'$sum': 1}}},
+            {'$sort': {'count': -1}},
+            {'$limit': 5}
+        ]
+        top_conditions = list(db['trials'].aggregate(pipeline))
+
+        return jsonify({
+            'total_trials':     total_trials,
+            'recruiting':       recruiting,
+            'conditions_covered': conditions_count,
+            'top_conditions':   [{'condition': c['_id'], 'count': c['count']} for c in top_conditions]
+        })
+    except Exception as e:
+        print(f'api_stats error: {e}')
+        return jsonify({'error': 'Stats unavailable'}), 500
+
+
 @app.route('/api/openapi.json')
 def openapi_spec():
     spec = {
@@ -101,14 +234,12 @@ def api_search():
         processed_studies = []
         patient_location = {"location": {"lat": user_lat, "lon": user_lon}}
         for study in search_results_raw:
-            # --- Normalise field names (handles both MongoDB projection and CT.gov fallback) ---
             study['nctId'] = study.get('nctId') or study.get('nct_id')
             study['title'] = study.get('title') or study.get('brief_title') or study.get('briefTitle') or 'Unknown Title'
             study['status'] = study.get('status') or study.get('overall_status') or study.get('overallStatus') or 'UNKNOWN'
             study['conditions'] = study.get('conditions') or study.get('conditions_str') or ''
             study['interventions'] = study.get('interventions') or []
 
-            # --- Normalise locations: preserve geoPoint AND add flat lat/lon ---
             normalised_locations = []
             for location in study.get('locations', []):
                 gp = location.get('geoPoint') or {}
@@ -123,7 +254,6 @@ def api_search():
                     })
             study['locations'] = normalised_locations
 
-            # --- Compute closest distance ---
             min_distance = float('inf')
             for loc in normalised_locations:
                 dist = haversine(user_lat, user_lon, loc['lat'], loc['lon'])
@@ -178,24 +308,23 @@ def api_upload_profile():
 
 @app.route('/api/apply_medical_profile', methods=['POST'])
 def api_apply_medical_profile():
-    if not session.get('user'):
-        return jsonify({"error": "Not logged in."}), 401
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "No data provided."}), 400
 
-    user_id = session['user']['id']
-
-    # --- FIX 1: Persist dossier to MongoDB so it survives session expiry ---
-    try:
-        save_patient_dossier(user_id, data)
-    except Exception as e:
-        print(f"Warning: could not persist dossier to MongoDB: {e}")
-
-    # Keep session copy for fast same-request access
+    # Save to session always (works for anonymous onboarding too)
     session['medical_profile'] = data
     session.modified = True
-    return jsonify({"status": "ok", "message": "Medical profile saved to session and dossier."})
+
+    # Persist to MongoDB only if logged in
+    if session.get('user'):
+        user_id = session['user']['id']
+        try:
+            save_patient_dossier(user_id, data)
+        except Exception as e:
+            print(f"Warning: could not persist dossier to MongoDB: {e}")
+
+    return jsonify({"status": "ok", "message": "Medical profile saved."})
 
 
 @app.route('/api/check_match/<nct_id>', methods=['GET', 'POST'])
@@ -211,7 +340,6 @@ def api_check_match(nct_id):
     if user_data.get('sex'):
         patient_profile['sex'] = user_data['sex'].upper()
 
-    # --- FIX 1: Load dossier from MongoDB if session cache is empty ---
     session_medical = session.get('medical_profile')
     if not session_medical:
         try:
@@ -229,7 +357,7 @@ def api_check_match(nct_id):
         enriched = request.get_json(silent=True) or {}
         patient_profile.update(enriched)
     has_enriched_data = any(
-        k in patient_profile for k in ('diagnosis', 'labs', 'prior_treatments', 'comorbidities')
+        k in patient_profile for k in ('diagnosis', 'labs', 'prior_treatments', 'comorbidities', 'condition')
     )
     if not has_enriched_data:
         if not patient_profile.get('age') or not patient_profile.get('sex'):
@@ -298,8 +426,6 @@ def api_agent_chat():
                 session_service=session_service
             )
 
-        # --- FIX 2: Use nest_asyncio to safely run async ADK calls inside
-        #     a synchronous Flask/Gunicorn worker that may already have a loop.
         import asyncio
         import nest_asyncio
         nest_asyncio.apply()
@@ -314,7 +440,7 @@ def api_agent_chat():
                 )
             )
         except Exception:
-            pass  # Session may already exist
+            pass
 
         reply = ''
         for event in runner.run(
@@ -382,7 +508,6 @@ def login():
         user = get_user_by_email(email)
         if user and check_password_hash(user['password_hash'], password):
             session['user'] = user
-            # Restore persisted dossier into session on login
             try:
                 dossier = load_patient_dossier(user['id'])
                 if dossier:
@@ -462,7 +587,6 @@ def authorize():
         profile_picture_url=user_info.get('picture')
     )
     session['user'] = user
-    # Restore persisted dossier into session on Google login
     try:
         dossier = load_patient_dossier(user['id'])
         if dossier:
@@ -609,7 +733,6 @@ def delete_account():
 # --- Admin Routes ---
 @app.route('/admin')
 def admin():
-    # --- FIX 3: Admin check via env var, never hardcoded ---
     if not _is_admin():
         abort(403)
     db = get_mongo_db()
