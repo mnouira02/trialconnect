@@ -1,271 +1,270 @@
 {% extends "layout.html" %}
+{% block title %}{{ trial.title | truncate(60) }} – TrialConnect{% endblock %}
 
-{% block title %}{{ trial.title or nct_id }} — TrialConnect{% endblock %}
-
-{% block content %}
+{% block head_links %}
 <style>
 .trial-hero {
-  background: linear-gradient(180deg, #0d1117 0%, #161b22 100%);
-  border-bottom: 1px solid #21262d;
-  padding: 3rem 0 2rem;
+    background: linear-gradient(135deg, #0d1b2a, #1b263b);
+    color: #fff;
+    padding: 3rem 0 2rem;
 }
-.trial-hero h1 { color: #f0f6fc; font-size: 1.55rem; font-weight: 700; line-height: 1.35; }
-.trial-hero .meta { color: #8b949e; font-size: .9rem; margin-top: .6rem; }
-.status-pill {
-  display: inline-block;
-  padding: .25rem .75rem;
-  border-radius: 50px;
-  font-size: .78rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .04em;
+.trial-hero .badge-status {
+    font-size: .82rem;
+    padding: .45rem .9rem;
+    border-radius: 30px;
 }
-.status-recruiting     { background: rgba(63,185,80,.15);  color: #3fb950; border: 1px solid #238636; }
-.status-completed      { background: rgba(88,166,255,.12); color: #58a6ff; border: 1px solid #1f6feb; }
-.status-not-recruiting { background: rgba(210,153,34,.12); color: #d29922; border: 1px solid #9e6a03; }
-.status-other          { background: rgba(139,148,158,.1); color: #8b949e; border: 1px solid #30363d; }
-
 .section-card {
-  background: #161b22;
-  border: 1px solid #21262d;
-  border-radius: 12px;
-  padding: 1.5rem;
-  margin-bottom: 1.25rem;
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 2px 14px rgba(0,0,0,.07);
+    padding: 1.75rem 2rem;
+    margin-bottom: 1.5rem;
 }
-.section-card h3 { color: #f0f6fc; font-size: 1rem; font-weight: 700; margin-bottom: 1rem; }
-
-.eligibility-block {
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  padding: 1rem 1.2rem;
-  font-size: .88rem;
-  color: #c9d1d9;
-  white-space: pre-wrap;
-  line-height: 1.6;
-  max-height: 260px;
-  overflow-y: auto;
-  margin-bottom: 1rem;
+.section-card h5 {
+    font-weight: 700;
+    color: #1b263b;
+    margin-bottom: 1rem;
+    font-size: 1rem;
+    border-bottom: 2px solid #e9ecef;
+    padding-bottom: .6rem;
 }
-
-.match-result-box {
-  border-radius: 10px;
-  padding: 1.2rem 1.4rem;
-  margin-bottom: 1.25rem;
-  display: none;
+.match-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    border-radius: 30px;
+    padding: .45rem 1.1rem;
+    font-size: .88rem;
+    font-weight: 600;
 }
-.match-result-box.match    { background: rgba(63,185,80,.08);  border: 1px solid #238636; }
-.match-result-box.partial  { background: rgba(210,153,34,.08); border: 1px solid #9e6a03; }
-.match-result-box.no-match { background: rgba(248,81,73,.08);  border: 1px solid #da3633; }
-.match-result-box .verdict-label { font-size: 1rem; font-weight: 700; margin-bottom: .4rem; }
-.match-result-box .verdict-reason { font-size: .88rem; color: #8b949e; line-height: 1.6; }
-.match-result-box .conf-badge {
-  display: inline-block;
-  background: rgba(255,255,255,.07);
-  border-radius: 50px;
-  padding: .15rem .6rem;
-  font-size: .75rem;
-  margin-left: .4rem;
-  vertical-align: middle;
-}
-
+.match-badge.eligible   { background: #d1fae5; color: #065f46; }
+.match-badge.ineligible { background: #fee2e2; color: #991b1b; }
+.match-badge.possible   { background: #fef3c7; color: #92400e; }
+.match-badge.unchecked  { background: #e2e8f0; color: #475569; }
+#map { height: 320px; border-radius: 12px; }
 .location-item {
-  display: flex;
-  align-items: flex-start;
-  gap: .6rem;
-  padding: .6rem 0;
-  border-bottom: 1px solid #21262d;
-  font-size: .88rem;
-  color: #c9d1d9;
+    display: flex;
+    align-items: flex-start;
+    gap: .75rem;
+    padding: .6rem 0;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: .88rem;
 }
-.location-item:last-child { border-bottom: none; }
-.location-item .loc-icon { color: #58a6ff; flex-shrink: 0; margin-top: 2px; }
-
-.cta-check-btn {
-  background: #1f6feb;
-  border: none;
-  border-radius: 8px;
-  color: #fff;
-  padding: .65rem 1.6rem;
-  font-size: .95rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background .2s;
-  width: 100%;
-  margin-top: .75rem;
-}
-.cta-check-btn:hover { background: #388bfd; }
-.cta-check-btn:disabled { background: #21262d; color: #484f58; }
-
-.ctgov-link {
-  display: inline-flex;
-  align-items: center;
-  gap: .4rem;
-  color: #58a6ff;
-  text-decoration: none;
-  font-size: .88rem;
-  font-weight: 600;
-}
-.ctgov-link:hover { color: #388bfd; }
+.location-item:last-child { border: none; }
+.loc-icon { color: #0d6efd; margin-top: 2px; flex-shrink: 0; }
+#match-result-box { display: none; }
 </style>
+{% endblock %}
 
+{% block content %}
+<!-- Hero -->
 <div class="trial-hero">
-  <div class="container">
-    <a href="javascript:history.back()" style="color:#8b949e;font-size:.85rem;text-decoration:none;">← Back to results</a>
-    <h1 class="mt-3">{{ trial.title or nct_id }}</h1>
-    <div class="meta d-flex flex-wrap align-items-center gap-2 mt-2">
-      {% set s = (trial.status or '') | upper %}
-      {% if 'RECRUITING' in s and 'NOT' not in s %}
-        <span class="status-pill status-recruiting">Recruiting</span>
-      {% elif 'COMPLETED' in s %}
-        <span class="status-pill status-completed">Completed</span>
-      {% elif 'NOT_YET' in s or 'NOT YET' in s %}
-        <span class="status-pill status-not-recruiting">Not Yet Recruiting</span>
+  <div class="container px-4 px-md-5">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+      {% set st = trial.status | upper %}
+      {% if 'RECRUITING' in st %}
+        <span class="badge-status badge bg-success">Recruiting</span>
+      {% elif 'COMPLETED' in st %}
+        <span class="badge-status badge bg-secondary">Completed</span>
+      {% elif 'NOT YET' in st %}
+        <span class="badge-status badge bg-info text-dark">Not Yet Recruiting</span>
       {% else %}
-        <span class="status-pill status-other">{{ trial.status or 'Unknown' }}</span>
+        <span class="badge-status badge bg-warning text-dark">{{ trial.status }}</span>
       {% endif %}
-      <span>NCT ID: <strong style="color:#c9d1d9;">{{ nct_id }}</strong></span>
-      <a class="ctgov-link" href="https://clinicaltrials.gov/study/{{ nct_id }}" target="_blank">
-        View on ClinicalTrials.gov ↗
-      </a>
+      <span class="badge bg-dark opacity-75">{{ trial.nctId }}</span>
     </div>
+    <h1 class="fw-bold fs-4 mb-1">{{ trial.title }}</h1>
+    <p class="opacity-75 mb-0 small">{{ trial.conditions }}</p>
   </div>
 </div>
 
-<div class="container py-4">
-  <div class="row gx-4">
+<div class="container px-4 px-md-5 py-4">
+  <div class="row g-4">
+    <!-- Left col -->
+    <div class="col-lg-8">
 
-    <!-- ── Left column ── -->
-    <div class="col-lg-7">
-
-      <!-- Conditions -->
-      {% if trial.conditions_str or trial.conditions %}
+      <!-- Eligibility AI check -->
       <div class="section-card">
-        <h3>🏷️ Conditions</h3>
-        <p style="color:#c9d1d9;margin:0;">{{ trial.conditions_str or trial.conditions }}</p>
-      </div>
-      {% endif %}
-
-      <!-- Eligibility -->
-      {% if trial.eligibility_criteria %}
-      <div class="section-card">
-        <h3>📋 Eligibility Criteria</h3>
-        <div class="eligibility-block">{{ trial.eligibility_criteria }}</div>
-
-        <!-- AI match result placeholder -->
-        <div class="match-result-box" id="match-result-box">
-          <div class="verdict-label" id="verdict-label"></div>
-          <div class="verdict-reason" id="verdict-reason"></div>
-        </div>
-
-        {% if session.get('user') %}
-          <button class="cta-check-btn" id="check-match-btn">✨ Check My Eligibility with Gemini AI</button>
+        <h5>🤖 AI Eligibility Check</h5>
+        {% if session.user %}
+          <div id="match-result-box" class="mb-3"></div>
+          <button class="btn btn-primary rounded-pill" id="btn-check-match"
+                  onclick="checkMyMatch()">
+            <i class="bi bi-shield-check me-1"></i> Check My Eligibility
+          </button>
+          <p class="text-muted small mt-2 mb-0">Uses your saved medical profile + Gemini AI to analyse this trial's criteria.</p>
         {% else %}
-          <a href="{{ url_for('login') }}" class="cta-check-btn d-block text-center text-decoration-none" style="line-height:1.8;">
-            Log in to check your eligibility
+          <p class="mb-2">Log in to get an AI-powered eligibility assessment for this trial.</p>
+          <a href="{{ url_for('login') }}" class="btn btn-outline-primary rounded-pill">
+            <i class="bi bi-person me-1"></i> Log in to check eligibility
           </a>
         {% endif %}
       </div>
-      {% endif %}
+
+      <!-- Eligibility criteria -->
+      <div class="section-card">
+        <h5>📋 Eligibility Criteria</h5>
+        {% if trial.eligibility_text %}
+          <div style="white-space: pre-line; font-size: .9rem; color: #374151;">{{ trial.eligibility_text }}</div>
+        {% else %}
+          <p class="text-muted small">Eligibility criteria not available locally.
+            <a href="https://clinicaltrials.gov/study/{{ trial.nctId }}" target="_blank">View on ClinicalTrials.gov →</a>
+          </p>
+        {% endif %}
+      </div>
 
       <!-- Interventions -->
       {% if trial.interventions %}
       <div class="section-card">
-        <h3>💊 Interventions</h3>
-        <ul style="color:#c9d1d9;padding-left:1.2rem;margin:0;">
-          {% for iv in trial.interventions[:10] %}
-          <li style="margin-bottom:.3rem;">
-            {% if iv is mapping %}
-              <strong>{{ iv.get('type','') }}</strong>{% if iv.get('name') %}: {{ iv.name }}{% endif %}
-            {% else %}
-              {{ iv }}
-            {% endif %}
-          </li>
+        <h5>💊 Interventions</h5>
+        <ul class="mb-0" style="font-size:.9rem;">
+          {% for iv in trial.interventions %}
+            <li>{{ iv }}</li>
           {% endfor %}
         </ul>
       </div>
       {% endif %}
 
-    </div>
+    </div><!-- /col -->
 
-    <!-- ── Right column ── -->
-    <div class="col-lg-5">
+    <!-- Right col -->
+    <div class="col-lg-4">
 
-      <!-- Locations -->
-      {% if trial.locations %}
+      <!-- Quick facts -->
       <div class="section-card">
-        <h3>📍 Trial Locations <span style="color:#8b949e;font-weight:400;font-size:.85rem;">({{ trial.locations|length }})</span></h3>
-        <div style="max-height:320px;overflow-y:auto;">
-          {% for loc in trial.locations[:20] %}
-          <div class="location-item">
-            <span class="loc-icon">📌</span>
-            <div>
-              {% if loc.facility %}<strong>{{ loc.facility }}</strong><br>{% endif %}
-              {% if loc.city %}<span>{{ loc.city }}{% if loc.state %}, {{ loc.state }}{% endif %}{% if loc.country %}, {{ loc.country }}{% endif %}</span>{% endif %}
-            </div>
+        <h5>ℹ️ Quick Facts</h5>
+        <table class="table table-sm table-borderless mb-0" style="font-size:.88rem;">
+          <tr><td class="text-muted pe-3">NCT ID</td><td><code>{{ trial.nctId }}</code></td></tr>
+          <tr><td class="text-muted">Status</td><td>{{ trial.status }}</td></tr>
+          {% if trial.phase %}<tr><td class="text-muted">Phase</td><td>{{ trial.phase }}</td></tr>{% endif %}
+          {% if trial.sponsor %}<tr><td class="text-muted">Sponsor</td><td>{{ trial.sponsor }}</td></tr>{% endif %}
+          {% if trial.closest_distance_km %}<tr><td class="text-muted">Distance</td><td>{{ trial.closest_distance_km }} km</td></tr>{% endif %}
+        </table>
+        <a href="https://clinicaltrials.gov/study/{{ trial.nctId }}" target="_blank"
+           class="btn btn-outline-secondary btn-sm w-100 mt-3 rounded-pill">
+          <i class="bi bi-box-arrow-up-right me-1"></i> View on ClinicalTrials.gov
+        </a>
+      </div>
+
+      <!-- Contacts -->
+      {% if trial.contacts %}
+      <div class="section-card">
+        <h5>📞 Contacts</h5>
+        {% for c in trial.contacts[:3] %}
+          <div class="mb-2" style="font-size:.88rem;">
+            <strong>{{ c.name or 'Contact' }}</strong><br>
+            {% if c.email %}<a href="mailto:{{ c.email }}">{{ c.email }}</a><br>{% endif %}
+            {% if c.phone %}<span class="text-muted">{{ c.phone }}</span>{% endif %}
           </div>
-          {% endfor %}
-          {% if trial.locations|length > 20 %}
-          <p style="color:#484f58;font-size:.8rem;text-align:center;margin-top:.5rem;">+{{ trial.locations|length - 20 }} more locations on ClinicalTrials.gov</p>
-          {% endif %}
-        </div>
+        {% endfor %}
       </div>
       {% endif %}
 
-      <!-- Summary / phases etc from CT.gov -->
-      <div class="section-card">
-        <h3>ℹ️ Quick Facts</h3>
-        <table style="width:100%;font-size:.87rem;color:#c9d1d9;">
-          <tbody id="quick-facts">
-            <tr><td style="color:#8b949e;padding:.3rem 0;">NCT ID</td><td style="text-align:right;">{{ nct_id }}</td></tr>
-            {% if trial.status %}<tr><td style="color:#8b949e;padding:.3rem 0;">Status</td><td style="text-align:right;">{{ trial.status.replace('_',' ') }}</td></tr>{% endif %}
-          </tbody>
-        </table>
+    </div><!-- /col right -->
+  </div><!-- /row -->
+
+  <!-- Locations map -->
+  {% if trial.locations %}
+  <div class="section-card">
+    <h5>📍 Trial Locations ({{ trial.locations | length }})</h5>
+    <div id="map" class="mb-3"></div>
+    <div id="location-list" style="max-height:260px; overflow-y:auto;">
+      {% for loc in trial.locations[:20] %}
+      <div class="location-item">
+        <i class="bi bi-geo-alt-fill loc-icon"></i>
+        <div>
+          {{ loc.facility or '' }}
+          {% if loc.city %}, {{ loc.city }}{% endif %}
+          {% if loc.state %}, {{ loc.state }}{% endif %}
+          {% if loc.country %}, {{ loc.country }}{% endif %}
+          {% if loc.status %}<br><span class="text-muted small">{{ loc.status }}</span>{% endif %}
+        </div>
       </div>
-
-      <a href="/onboard" class="cta-check-btn d-block text-center text-decoration-none" style="background:#238636;">
-        🔍 Find More Trials Like This
-      </a>
+      {% endfor %}
     </div>
-
   </div>
+  {% endif %}
+
+  <!-- Back / CTA -->
+  <div class="d-flex gap-3 mt-2 mb-5">
+    <button onclick="history.back()" class="btn btn-outline-secondary rounded-pill">
+      ← Back to results
+    </button>
+    {% if session.user %}
+    <button onclick="checkMyMatch()" class="btn btn-primary rounded-pill">
+      <i class="bi bi-shield-check me-1"></i> Check My Eligibility
+    </button>
+    {% endif %}
+    <a href="{{ url_for('onboarding') }}" class="btn btn-outline-primary rounded-pill">
+      🔍 New search
+    </a>
+  </div>
+
 </div>
 {% endblock %}
 
 {% block scripts %}
-{% if session.get('user') %}
 <script>
-const NCT_ID = {{ nct_id | tojson }};
-const checkBtn = document.getElementById('check-match-btn');
-const resultBox = document.getElementById('match-result-box');
-const verdictLabel = document.getElementById('verdict-label');
-const verdictReason = document.getElementById('verdict-reason');
+// ── Map init ────────────────────────────────────────────────────────────────
+const locations = {{ trial.locations | tojson }};
+if (locations.length > 0) {
+  const map = L.map('map');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
 
-if (checkBtn) {
-  checkBtn.addEventListener('click', async () => {
-    checkBtn.disabled = true;
-    checkBtn.textContent = '⏳ Gemini is checking your eligibility…';
-    try {
-      const r = await fetch(`/api/check_match/${NCT_ID}`);
-      const d = await r.json();
-      const v = (d.verdict || d.status || '').toUpperCase();
-      resultBox.className = 'match-result-box ';
-      let icon = '', color = '';
-      if (v === 'MATCH')         { icon='✅ Likely Eligible';   resultBox.classList.add('match');    }
-      else if (v === 'PARTIAL_MATCH') { icon='🔶 Possibly Eligible'; resultBox.classList.add('partial');  }
-      else if (v === 'NO_MATCH') { icon='❌ Likely Ineligible'; resultBox.classList.add('no-match'); }
-      else                       { icon='ℹ️ Result';             resultBox.classList.add('partial');  }
-      const conf = d.confidence ? `<span class="conf-badge">${d.confidence}% confidence</span>` : '';
-      verdictLabel.innerHTML = icon + conf;
-      verdictReason.textContent = d.plain_english_summary || d.reason || 'No further details available.';
-      resultBox.style.display = 'block';
-      checkBtn.style.display = 'none';
-    } catch {
-      checkBtn.disabled = false;
-      checkBtn.textContent = '✨ Check My Eligibility with Gemini AI';
+  const group = [];
+  locations.forEach(loc => {
+    const gp = loc.geoPoint || {};
+    const lat = gp.lat || loc.lat;
+    const lon = gp.lon || loc.lon;
+    if (lat && lon) {
+      const m = L.marker([lat, lon]).addTo(map);
+      const label = [loc.facility, loc.city, loc.country].filter(Boolean).join(', ');
+      m.bindPopup(label);
+      group.push([lat, lon]);
     }
   });
+  if (group.length) map.fitBounds(group, { padding: [30, 30] });
+}
+
+// ── AI eligibility check ─────────────────────────────────────────────────
+async function checkMyMatch() {
+  const btn = document.getElementById('btn-check-match');
+  const box = document.getElementById('match-result-box');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Analysing…';
+  box.style.display = 'none';
+
+  try {
+    const r = await fetch('/api/check_match/{{ trial.nctId }}');
+    const data = await r.json();
+
+    let cls = 'unchecked', icon = '❓', label = 'Eligibility Unknown';
+    const status = (data.status || data.eligibility_status || '').toUpperCase();
+    if (status === 'ELIGIBLE' || status === 'YES') {
+      cls = 'eligible';   icon = '✅'; label = 'Likely Eligible';
+    } else if (status === 'INELIGIBLE' || status === 'NO') {
+      cls = 'ineligible'; icon = '❌'; label = 'Likely Not Eligible';
+    } else if (status === 'POSSIBLY_ELIGIBLE' || status === 'POSSIBLE' || status === 'MAYBE') {
+      cls = 'possible';   icon = '⚠️'; label = 'Possibly Eligible';
+    }
+
+    const reason = data.reason || data.eligibility_reason || '';
+    box.innerHTML = `
+      <div class="match-badge ${cls} mb-2">${icon} ${label}</div>
+      ${reason ? `<p class="small text-muted mb-0 mt-2">${reason}</p>` : ''}`;
+    box.style.display = 'block';
+  } catch(e) {
+    box.innerHTML = '<p class="text-danger small mb-0">Check failed. Please try again.</p>';
+    box.style.display = 'block';
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-shield-check me-1"></i> Re-check Eligibility';
 }
 </script>
-{% endif %}
+<!-- Leaflet for map -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 {% endblock %}

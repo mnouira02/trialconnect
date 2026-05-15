@@ -1,589 +1,535 @@
 {% extends "layout.html" %}
+{% block title %}Find Your Trials – TrialConnect{% endblock %}
 
-{% block title %}Find Your Trial — TrialConnect{% endblock %}
-
-{% block content %}
+{% block head_links %}
 <style>
-/* ── Wizard shell ── */
-.wizard-shell {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #0d1117 0%, #161b22 60%, #0d1117 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem 1rem;
+/* ── Wizard container ── */
+.wizard-wrap {
+    min-height: 100vh;
+    background: linear-gradient(135deg, #0d1b2a 0%, #1b263b 60%, #415a77 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
 }
 .wizard-card {
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 16px;
-  width: 100%;
-  max-width: 640px;
-  padding: 2.5rem;
-  box-shadow: 0 24px 80px rgba(0,0,0,.55);
+    background: #fff;
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.35);
+    max-width: 640px;
+    width: 100%;
+    overflow: hidden;
 }
-/* ── Step indicators ── */
-.step-indicators {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  margin-bottom: 2.5rem;
+.wizard-header {
+    background: linear-gradient(135deg, #0d6efd, #6610f2);
+    padding: 2rem 2.5rem 1.5rem;
+    color: #fff;
 }
-.step-dot {
-  width: 32px; height: 32px;
-  border-radius: 50%;
-  border: 2px solid #30363d;
-  background: #0d1117;
-  color: #8b949e;
-  font-size: .78rem;
-  font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-  position: relative;
-  transition: all .3s;
-  flex-shrink: 0;
+.wizard-header h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: .25rem; }
+.wizard-header p  { opacity: .85; font-size: .92rem; margin: 0; }
+.progress-dots {
+    display: flex;
+    gap: .6rem;
+    margin-top: 1.2rem;
+    align-items: center;
 }
-.step-dot.active   { border-color: #58a6ff; background: #1f6feb; color: #fff; }
-.step-dot.complete { border-color: #3fb950; background: #238636; color: #fff; }
-.step-line {
-  flex: 1;
-  height: 2px;
-  background: #30363d;
-  transition: background .3s;
+.dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.35);
+    transition: all .3s;
 }
-.step-line.complete { background: #238636; }
+.dot.active   { background: #fff; transform: scale(1.35); }
+.dot.done     { background: rgba(255,255,255,.75); }
 .step-label {
-  position: absolute;
-  top: 36px;
-  left: 50%;
-  transform: translateX(-50%);
-  white-space: nowrap;
-  font-size: .7rem;
-  color: #8b949e;
+    font-size: .75rem;
+    opacity: .75;
+    margin-left: auto;
 }
-.step-dot.active .step-label,
-.step-dot.complete .step-label { color: #c9d1d9; }
 
-/* ── Step panels ── */
-.step-panel { display: none; }
-.step-panel.active { display: block; }
-
-/* ── Typography ── */
-.wizard-title { font-size: 1.55rem; font-weight: 700; color: #f0f6fc; margin-bottom: .4rem; }
-.wizard-sub   { color: #8b949e; font-size: .95rem; margin-bottom: 1.8rem; }
-
-/* ── Form controls ── */
-.wz-label { color: #c9d1d9; font-size: .88rem; font-weight: 600; margin-bottom: .4rem; }
-.wz-input {
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  color: #f0f6fc;
-  padding: .65rem 1rem;
-  font-size: .95rem;
-  width: 100%;
-  transition: border-color .2s;
+/* ── Step body ── */
+.wizard-body { padding: 2rem 2.5rem; }
+.wizard-step { display: none; }
+.wizard-step.active { display: block; }
+.step-title {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #1b263b;
+    margin-bottom: .35rem;
 }
-.wz-input:focus { outline: none; border-color: #58a6ff; box-shadow: 0 0 0 3px rgba(88,166,255,.15); }
-.wz-input::placeholder { color: #484f58; }
-select.wz-input option { background: #161b22; }
+.step-sub  { color: #6c757d; font-size: .9rem; margin-bottom: 1.5rem; }
 
-/* ── Quick-pick chips ── */
-.chip-grid { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.2rem; }
-.chip {
-  padding: .32rem .85rem;
-  border-radius: 50px;
-  border: 1px solid #30363d;
-  background: #0d1117;
-  color: #8b949e;
-  font-size: .8rem;
-  cursor: pointer;
-  transition: all .15s;
-  user-select: none;
+/* Condition pills */
+.condition-pills { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.25rem; }
+.cond-pill {
+    border: 2px solid #dee2e6;
+    border-radius: 30px;
+    padding: .4rem 1rem;
+    font-size: .85rem;
+    cursor: pointer;
+    transition: all .2s;
+    background: #fff;
+    color: #495057;
+    user-select: none;
 }
-.chip:hover  { border-color: #58a6ff; color: #58a6ff; }
-.chip.active { border-color: #58a6ff; background: rgba(88,166,255,.12); color: #58a6ff; }
+.cond-pill:hover  { border-color: #0d6efd; color: #0d6efd; }
+.cond-pill.sel    { border-color: #0d6efd; background: #0d6efd; color: #fff; }
 
-/* ── Location row ── */
-.loc-row { display: flex; gap: .75rem; align-items: flex-end; }
-.loc-row .wz-input { flex: 1; }
-.loc-detect-btn {
-  flex-shrink: 0;
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  color: #8b949e;
-  padding: .65rem .9rem;
-  font-size: .85rem;
-  cursor: pointer;
-  transition: all .2s;
-  white-space: nowrap;
-}
-.loc-detect-btn:hover { border-color: #58a6ff; color: #58a6ff; }
-
-/* ── Upload zone ── */
+/* Upload zone */
 .upload-zone {
-  border: 2px dashed #30363d;
-  border-radius: 12px;
-  padding: 2rem;
-  text-align: center;
-  cursor: pointer;
-  transition: border-color .2s, background .2s;
-  margin-bottom: 1rem;
+    border: 2px dashed #dee2e6;
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
 }
-.upload-zone:hover, .upload-zone.drag-over {
-  border-color: #58a6ff;
-  background: rgba(88,166,255,.04);
-}
-.upload-zone .upload-icon { font-size: 2rem; margin-bottom: .5rem; }
-.upload-zone p { color: #8b949e; font-size: .88rem; margin: 0; }
-.upload-zone .upload-hint { font-size: .78rem; color: #484f58; margin-top: .3rem; }
-.upload-status {
-  font-size: .85rem;
-  padding: .5rem .8rem;
-  border-radius: 8px;
-  margin-bottom: 1rem;
-  display: none;
-}
-.upload-status.success { background: rgba(63,185,80,.12); color: #3fb950; border: 1px solid #238636; display: block; }
-.upload-status.error   { background: rgba(248,81,73,.12);  color: #f85149; border: 1px solid #da3633; display: block; }
-.upload-status.loading { background: rgba(88,166,255,.08); color: #58a6ff; border: 1px solid #1f6feb; display: block; }
+.upload-zone:hover { border-color: #0d6efd; background: #f0f6ff; }
+.upload-zone.dragging { border-color: #0d6efd; background: #e6f0ff; }
+#upload-filename { font-size: .82rem; color: #6c757d; margin-top: .5rem; }
 
-/* ── Manual fields ── */
-.manual-toggle {
-  color: #58a6ff;
-  font-size: .85rem;
-  cursor: pointer;
-  text-decoration: underline;
-  display: inline-block;
-  margin-bottom: 1rem;
+/* Nav row */
+.wizard-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 2.5rem 1.5rem;
+    border-top: 1px solid #f0f0f0;
 }
-.manual-fields { display: none; }
-.manual-fields.open { display: block; }
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: .75rem; }
+.btn-wiz-back {
+    background: none;
+    border: none;
+    color: #6c757d;
+    font-size: .9rem;
+    padding: 0;
+    cursor: pointer;
+}
+.btn-wiz-back:hover { color: #343a40; }
+.btn-wiz-next {
+    background: linear-gradient(135deg, #0d6efd, #6610f2);
+    border: none;
+    color: #fff;
+    border-radius: 30px;
+    padding: .55rem 2rem;
+    font-weight: 600;
+    font-size: .95rem;
+    cursor: pointer;
+    transition: opacity .2s;
+}
+.btn-wiz-next:hover { opacity: .88; }
+.btn-wiz-next:disabled { opacity: .45; cursor: not-allowed; }
 
-/* ── Navigation buttons ── */
-.wz-nav {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 2rem;
-  gap: 1rem;
+/* Loading overlay */
+#wiz-loading {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.55);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    color: #fff;
+    font-size: 1.1rem;
+    gap: 1.2rem;
 }
-.wz-nav .btn-back {
-  background: none;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  color: #8b949e;
-  padding: .6rem 1.2rem;
-  font-size: .9rem;
-  cursor: pointer;
-  transition: all .2s;
+#wiz-loading.show { display: flex; }
+.spin {
+    width: 52px; height: 52px;
+    border: 5px solid rgba(255,255,255,.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
 }
-.wz-nav .btn-back:hover { border-color: #8b949e; color: #c9d1d9; }
-.wz-nav .btn-next {
-  background: #1f6feb;
-  border: none;
-  border-radius: 8px;
-  color: #fff;
-  padding: .65rem 1.8rem;
-  font-size: .95rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background .2s;
-  flex: 1;
-  max-width: 260px;
-}
-.wz-nav .btn-next:hover { background: #388bfd; }
-.wz-nav .btn-next:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Profile summary card ── */
-.profile-summary {
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 10px;
-  padding: 1rem 1.2rem;
-  margin-bottom: 1.2rem;
-  display: none;
+/* Profile preview card */
+.profile-card {
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    font-size: .88rem;
+    line-height: 1.7;
 }
-.profile-summary.visible { display: block; }
-.profile-summary .ps-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: .85rem;
-  color: #8b949e;
-  padding: .25rem 0;
-  border-bottom: 1px solid #21262d;
-}
-.profile-summary .ps-row:last-child { border-bottom: none; }
-.profile-summary .ps-val { color: #c9d1d9; font-weight: 500; }
+.profile-card strong { color: #1b263b; }
 
-/* ── Skip text ── */
-.skip-link {
-  text-align: center;
-  margin-top: 1rem;
+@media (max-width: 600px) {
+    .wizard-body, .wizard-nav { padding-left: 1.25rem; padding-right: 1.25rem; }
+    .wizard-header { padding: 1.5rem 1.25rem 1.25rem; }
 }
-.skip-link a { color: #484f58; font-size: .82rem; text-decoration: none; }
-.skip-link a:hover { color: #8b949e; }
-
-/* ── Back to home ── */
-.back-home {
-  position: fixed;
-  top: 1.2rem;
-  left: 1.2rem;
-  color: #484f58;
-  font-size: .82rem;
-  text-decoration: none;
-  z-index: 100;
-  transition: color .2s;
-}
-.back-home:hover { color: #8b949e; }
 </style>
+{% endblock %}
 
-<a href="{{ url_for('index') }}" class="back-home">← Back to home</a>
+{% block content %}
+<div id="wiz-loading">
+    <div class="spin"></div>
+    <span id="wiz-loading-msg">Finding your trials…</span>
+</div>
 
-<div class="wizard-shell">
+<div class="wizard-wrap">
   <div class="wizard-card">
 
-    <!-- Step indicators -->
-    <div class="step-indicators" style="padding-top:1rem;">
-      <div class="step-dot active" id="dot-1"><span>1</span><div class="step-label">Condition</div></div>
-      <div class="step-line" id="line-1"></div>
-      <div class="step-dot" id="dot-2"><span>2</span><div class="step-label">Location</div></div>
-      <div class="step-line" id="line-2"></div>
-      <div class="step-dot" id="dot-3"><span>3</span><div class="step-label">Your Profile</div></div>
-    </div>
-
-    <!-- ═══════ STEP 1: Condition ═══════ -->
-    <div class="step-panel active" id="step-1">
-      <div class="wizard-title">What condition are you searching for?</div>
-      <div class="wizard-sub">Select one or type your own. We'll find trials matched to it.</div>
-
-      <p class="wz-label">Common conditions</p>
-      <div class="chip-grid" id="condition-chips">
-        <div class="chip" data-val="breast cancer">Breast Cancer</div>
-        <div class="chip" data-val="lung cancer">Lung Cancer</div>
-        <div class="chip" data-val="diabetes type 2">Type 2 Diabetes</div>
-        <div class="chip" data-val="heart failure">Heart Failure</div>
-        <div class="chip" data-val="COPD">COPD</div>
-        <div class="chip" data-val="depression">Depression</div>
-        <div class="chip" data-val="multiple sclerosis">Multiple Sclerosis</div>
-        <div class="chip" data-val="Alzheimer disease">Alzheimer's</div>
-        <div class="chip" data-val="Parkinson disease">Parkinson's</div>
-        <div class="chip" data-val="rheumatoid arthritis">Rheumatoid Arthritis</div>
-        <div class="chip" data-val="Crohn disease">Crohn's Disease</div>
-        <div class="chip" data-val="prostate cancer">Prostate Cancer</div>
-      </div>
-
-      <p class="wz-label">Or describe it yourself</p>
-      <input class="wz-input" id="condition-input" type="text" placeholder="e.g. non-small cell lung cancer, atrial fibrillation…" autocomplete="off" />
-
-      <div class="wz-nav">
-        <div></div>
-        <button class="btn-next" id="step1-next" disabled>Next: Your Location →</button>
-      </div>
-      <div class="skip-link"><a href="{{ url_for('index') }}">Skip wizard and search manually</a></div>
-    </div>
-
-    <!-- ═══════ STEP 2: Location ═══════ -->
-    <div class="step-panel" id="step-2">
-      <div class="wizard-title">Where are you located?</div>
-      <div class="wizard-sub">We'll rank trials by distance to the nearest site.</div>
-
-      <p class="wz-label">City or postcode</p>
-      <div class="loc-row">
-        <input class="wz-input" id="location-input" type="text" placeholder="e.g. Paris, New York, 10001…" autocomplete="off" />
-        <button class="loc-detect-btn" id="detect-loc-btn">📍 Detect</button>
-      </div>
-      <div id="loc-status" style="font-size:.8rem;color:#58a6ff;margin-top:.4rem;min-height:1.2rem;"></div>
-
-      <div class="wz-nav">
-        <button class="btn-back" id="step2-back">← Back</button>
-        <button class="btn-next" id="step2-next" disabled>Next: Your Profile →</button>
+    <!-- Header -->
+    <div class="wizard-header">
+      <h2>🧬 Find Your Clinical Trials</h2>
+      <p>Answer 4 quick questions and we'll match you to relevant trials in seconds.</p>
+      <div class="progress-dots">
+        <div class="dot active" id="dot-1"></div>
+        <div class="dot"        id="dot-2"></div>
+        <div class="dot"        id="dot-3"></div>
+        <div class="dot"        id="dot-4"></div>
+        <span class="step-label" id="step-label">Step 1 of 4</span>
       </div>
     </div>
 
-    <!-- ═══════ STEP 3: Profile ═══════ -->
-    <div class="step-panel" id="step-3">
-      <div class="wizard-title">Tell us a bit about yourself</div>
-      <div class="wizard-sub">This helps Gemini AI check your eligibility for each trial.</div>
+    <!-- ── STEP 1 : Condition ── -->
+    <div class="wizard-body">
+      <div class="wizard-step active" id="step-1">
+        <div class="step-title">What condition are you dealing with?</div>
+        <div class="step-sub">Pick one or type your own – we'll find trials that match.</div>
 
-      <!-- Upload zone -->
-      <div class="upload-zone" id="upload-zone">
-        <div class="upload-icon">📄</div>
-        <p><strong style="color:#c9d1d9;">Upload your medical records</strong></p>
-        <p>Gemini will extract your profile automatically</p>
-        <p class="upload-hint">PDF, PNG or JPG · max 10 MB</p>
-        <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg" style="display:none" />
+        <div class="condition-pills" id="cond-pills">
+          {% for c in [
+            'Asthma','Breast Cancer','Lung Cancer','NSCLC','SCLC',
+            'Diabetes Type 2','COPD','Heart Failure','Depression',
+            'Alzheimer Disease','Parkinson Disease','Multiple Sclerosis',
+            'Rheumatoid Arthritis','Crohn Disease','Hypertension','Obesity',
+            'COVID-19','Renal Cell Carcinoma','Colorectal Cancer','Prostate Cancer',
+            'Melanoma','Glioblastoma','Leukemia','Lymphoma','Ovarian Cancer','Pancreatic Cancer'
+          ] %}
+          <span class="cond-pill" onclick="pickCond(this)">{{ c }}</span>
+          {% endfor %}
+        </div>
+
+        <input type="text" id="cond-custom" class="form-control" placeholder="Or type your own condition…"
+               oninput="wizState.condition = this.value; syncNext();">
       </div>
-      <div class="upload-status" id="upload-status"></div>
 
-      <!-- Extracted profile summary -->
-      <div class="profile-summary" id="profile-summary"></div>
+      <!-- ── STEP 2 : Location ── -->
+      <div class="wizard-step" id="step-2">
+        <div class="step-title">Where are you located?</div>
+        <div class="step-sub">We use this to rank trials by distance to you.</div>
 
-      <!-- Manual toggle -->
-      <span class="manual-toggle" id="manual-toggle">✏️ Enter details manually instead</span>
-
-      <!-- Manual fields -->
-      <div class="manual-fields" id="manual-fields">
-        <div class="row-2">
-          <div>
-            <p class="wz-label">Birth year</p>
-            <input class="wz-input" id="m-birthyear" type="number" min="1900" max="2010" placeholder="e.g. 1978" />
+        <div class="mb-3">
+          <input type="text" id="loc-input" class="form-control" placeholder="City, ZIP or address"
+                 oninput="wizState.locationText = this.value; syncNext();">
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Search radius</label>
+          <div class="d-flex align-items-center gap-3">
+            <input type="range" id="radius-slider" min="50" max="500" step="50" value="200"
+                   class="form-range flex-grow-1" oninput="wizState.radius=+this.value; document.getElementById('radius-val').textContent=this.value;">
+            <span id="radius-val" class="badge bg-primary" style="min-width:60px;">200 km</span>
           </div>
-          <div>
-            <p class="wz-label">Sex</p>
-            <select class="wz-input" id="m-sex">
+        </div>
+        <button class="btn btn-outline-secondary btn-sm" onclick="useMyLocation()">
+          <i class="bi bi-geo-alt-fill me-1"></i> Use my current location
+        </button>
+        <div id="geo-status" class="small text-success mt-2"></div>
+      </div>
+
+      <!-- ── STEP 3 : Medical profile ── -->
+      <div class="wizard-step" id="step-3">
+        <div class="step-title">Tell us a bit about yourself</div>
+        <div class="step-sub">Optional – but the more you share, the better the eligibility match.</div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-6">
+            <label class="form-label fw-semibold">Birth year</label>
+            <input type="number" id="p-birthyear" class="form-control" placeholder="e.g. 1975" min="1920" max="2010"
+                   value="{{ session.user.birthYear if session.user and session.user.birthYear else '' }}"
+                   oninput="wizState.birthYear=+this.value;">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Sex</label>
+            <select id="p-sex" class="form-select" onchange="wizState.sex=this.value;">
               <option value="">Select…</option>
-              <option value="MALE">Male</option>
-              <option value="FEMALE">Female</option>
+              <option value="MALE" {% if session.user and session.user.sex == 'MALE' %}selected{% endif %}>Male</option>
+              <option value="FEMALE" {% if session.user and session.user.sex == 'FEMALE' %}selected{% endif %}>Female</option>
               <option value="OTHER">Other / Prefer not to say</option>
             </select>
           </div>
         </div>
-        <div style="margin-bottom:.75rem;">
-          <p class="wz-label">Primary diagnosis</p>
-          <input class="wz-input" id="m-diagnosis" type="text" placeholder="e.g. Stage IIIA NSCLC" />
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Key diagnoses / conditions <span class="text-muted fw-normal">(optional)</span></label>
+          <input type="text" id="p-diagnosis" class="form-control" placeholder="e.g. Stage 3 NSCLC, hypertension"
+                 oninput="wizState.diagnosis=this.value;">
         </div>
-        <div style="margin-bottom:.75rem;">
-          <p class="wz-label">Current medications / prior treatments <span style="color:#484f58;font-weight:400;">(optional)</span></p>
-          <input class="wz-input" id="m-treatments" type="text" placeholder="e.g. Carboplatin, Pembrolizumab" />
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Current medications <span class="text-muted fw-normal">(optional)</span></label>
+          <input type="text" id="p-meds" class="form-control" placeholder="e.g. metformin, lisinopril"
+                 oninput="wizState.medications=this.value;">
         </div>
-        <div style="margin-bottom:.75rem;">
-          <p class="wz-label">Other conditions / comorbidities <span style="color:#484f58;font-weight:400;">(optional)</span></p>
-          <input class="wz-input" id="m-comorbidities" type="text" placeholder="e.g. Type 2 Diabetes, Hypertension" />
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Upload medical document <span class="text-muted fw-normal">(optional – PDF / JPG / PNG)</span></label>
+          <div class="upload-zone" id="upload-zone"
+               onclick="document.getElementById('doc-file').click()"
+               ondragover="event.preventDefault();this.classList.add('dragging');"
+               ondragleave="this.classList.remove('dragging');"
+               ondrop="handleDrop(event)">
+            <i class="bi bi-cloud-arrow-up fs-3 text-secondary"></i>
+            <p class="mb-0 text-secondary mt-2 small">Drag &amp; drop or click to upload</p>
+          </div>
+          <div id="upload-filename"></div>
+          <input type="file" id="doc-file" class="d-none" accept=".pdf,.jpg,.jpeg,.png"
+                 onchange="handleFileSelect(event)">
+          <div id="upload-status" class="small mt-1"></div>
         </div>
       </div>
 
-      <div class="wz-nav">
-        <button class="btn-back" id="step3-back">← Back</button>
-        <button class="btn-next" id="step3-next">Find My Trials →</button>
+      <!-- ── STEP 4 : Review & launch ── -->
+      <div class="wizard-step" id="step-4">
+        <div class="step-title">You're ready! Here's your search</div>
+        <div class="step-sub">Confirm and we'll find your best-matched trials instantly.</div>
+
+        <div class="profile-card mb-3" id="review-card">Loading…</div>
+
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="consent-check"
+                 onchange="syncNext();">
+          <label class="form-check-label small" for="consent-check">
+            I understand this tool is informational only and does not constitute medical advice.
+            Always consult a healthcare professional before enrolling in a clinical trial.
+          </label>
+        </div>
       </div>
-      <div class="skip-link"><a href="#" id="skip-profile">Skip — search without eligibility matching</a></div>
+    </div><!-- /wizard-body -->
+
+    <!-- Navigation -->
+    <div class="wizard-nav">
+      <button class="btn-wiz-back" id="btn-back" onclick="wizBack()" style="visibility:hidden;">← Back</button>
+      <button class="btn-wiz-next" id="btn-next" onclick="wizNext()">Next →</button>
     </div>
 
-  </div>
-</div>
+  </div><!-- /wizard-card -->
+</div><!-- /wizard-wrap -->
 {% endblock %}
 
 {% block scripts %}
 <script>
-// ── State ──────────────────────────────────────────────────────────────────
-const state = {
+const TOTAL_STEPS = 4;
+let currentStep = 1;
+
+const wizState = {
   condition: '',
-  lat: null, lon: null, locationLabel: '',
-  profile: null   // will be set from upload or manual
+  locationText: '',
+  lat: {{ fallback_lat }},
+  lon: {{ fallback_lon }},
+  radius: 200,
+  birthYear: null,
+  sex: '',
+  diagnosis: '',
+  medications: '',
+  extractedProfile: null
 };
 
-// ── Utility ────────────────────────────────────────────────────────────────
-function goToStep(n) {
-  document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
-  document.getElementById(`step-${n}`).classList.add('active');
-  [1,2,3].forEach(i => {
-    const dot  = document.getElementById(`dot-${i}`);
-    const line = document.getElementById(`line-${i}`);
-    dot.classList.remove('active','complete');
-    if (line) line.classList.remove('complete');
-    if (i < n)  { dot.classList.add('complete'); if (line) line.classList.add('complete'); }
-    if (i === n) dot.classList.add('active');
-  });
+// ── Dot & label update ──────────────────────────────────────────────────
+function updateDots(step) {
+  for (let i = 1; i <= TOTAL_STEPS; i++) {
+    const d = document.getElementById('dot-' + i);
+    d.className = 'dot' + (i < step ? ' done' : (i === step ? ' active' : ''));
+  }
+  document.getElementById('step-label').textContent = 'Step ' + step + ' of ' + TOTAL_STEPS;
 }
 
-// ── STEP 1 ─────────────────────────────────────────────────────────────────
-const condInput = document.getElementById('condition-input');
-const step1Next = document.getElementById('step1-next');
-
-function updateStep1() {
-  step1Next.disabled = !state.condition.trim();
+// ── Condition pill select ────────────────────────────────────────────────
+function pickCond(el) {
+  document.querySelectorAll('.cond-pill').forEach(p => p.classList.remove('sel'));
+  el.classList.add('sel');
+  wizState.condition = el.textContent.trim();
+  document.getElementById('cond-custom').value = '';
+  syncNext();
 }
 
-document.querySelectorAll('.chip').forEach(chip => {
-  chip.addEventListener('click', () => {
-    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-    chip.classList.add('active');
-    state.condition = chip.dataset.val;
-    condInput.value = '';
-    updateStep1();
-  });
-});
-
-condInput.addEventListener('input', () => {
-  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-  state.condition = condInput.value.trim();
-  updateStep1();
-});
-
-step1Next.addEventListener('click', () => { if (state.condition) goToStep(2); });
-
-// ── STEP 2 ─────────────────────────────────────────────────────────────────
-const locInput  = document.getElementById('location-input');
-const locStatus = document.getElementById('loc-status');
-const step2Next = document.getElementById('step2-next');
-const step2Back = document.getElementById('step2-back');
-const detectBtn = document.getElementById('detect-loc-btn');
-
-function setLocationReady(lat, lon, label) {
-  state.lat = lat; state.lon = lon; state.locationLabel = label;
-  locStatus.textContent = `📍 ${label}`;
-  step2Next.disabled = false;
+// ── Enable/disable next button ───────────────────────────────────────────
+function syncNext() {
+  const btn = document.getElementById('btn-next');
+  if (currentStep === 1) btn.disabled = !wizState.condition.trim();
+  else if (currentStep === 2) btn.disabled = !(wizState.locationText.trim() || (wizState.lat && wizState.lon));
+  else if (currentStep === 3) btn.disabled = false;
+  else if (currentStep === 4) btn.disabled = !document.getElementById('consent-check').checked;
 }
 
-detectBtn.addEventListener('click', () => {
-  locStatus.textContent = 'Detecting…';
+// ── Geolocation ──────────────────────────────────────────────────────────
+function useMyLocation() {
+  const geo = document.getElementById('geo-status');
+  geo.textContent = 'Locating you…';
   navigator.geolocation.getCurrentPosition(
     pos => {
-      setLocationReady(pos.coords.latitude, pos.coords.longitude, `${pos.coords.latitude.toFixed(3)}, ${pos.coords.longitude.toFixed(3)}`);
-      locInput.value = 'Current location';
+      wizState.lat = pos.coords.latitude;
+      wizState.lon = pos.coords.longitude;
+      wizState.locationText = `${pos.coords.latitude.toFixed(3)}, ${pos.coords.longitude.toFixed(3)}`;
+      document.getElementById('loc-input').value = wizState.locationText;
+      geo.textContent = '✓ Location detected';
+      syncNext();
     },
-    () => { locStatus.textContent = 'Could not detect — please type your city.'; }
+    () => { geo.className = 'small text-danger mt-2'; geo.textContent = 'Could not detect location – please type it.'; }
   );
-});
-
-locInput.addEventListener('keydown', async (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    await geocodeInputLocation();
-  }
-});
-
-locInput.addEventListener('blur', geocodeInputLocation);
-
-async function geocodeInputLocation() {
-  const q = locInput.value.trim();
-  if (!q || q === 'Current location') return;
-  locStatus.textContent = 'Looking up…';
-  try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`);
-    const d = await r.json();
-    if (d && d.length > 0) {
-      setLocationReady(parseFloat(d[0].lat), parseFloat(d[0].lon), d[0].display_name.split(',').slice(0,2).join(',').trim());
-    } else {
-      locStatus.textContent = '⚠️ Location not found. Try a different city name.';
-    }
-  } catch { locStatus.textContent = '⚠️ Geocoding error.'; }
 }
 
-step2Back.addEventListener('click', () => goToStep(1));
-step2Next.addEventListener('click', () => { if (state.lat) goToStep(3); });
+// ── Geocode typed location ────────────────────────────────────────────────
+async function geocodeLocation(text) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(text)}&limit=1`);
+    const data = await r.json();
+    if (data && data.length > 0) {
+      wizState.lat = parseFloat(data[0].lat);
+      wizState.lon = parseFloat(data[0].lon);
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
 
-// ── STEP 3 ─────────────────────────────────────────────────────────────────
-const uploadZone   = document.getElementById('upload-zone');
-const fileInput    = document.getElementById('file-input');
-const uploadStatus = document.getElementById('upload-status');
-const profileSum   = document.getElementById('profile-summary');
-const manualToggle = document.getElementById('manual-toggle');
-const manualFields = document.getElementById('manual-fields');
-const step3Back    = document.getElementById('step3-back');
-const step3Next    = document.getElementById('step3-next');
-const skipProfile  = document.getElementById('skip-profile');
+// ── File upload ───────────────────────────────────────────────────────────
+function handleDrop(event) {
+  event.preventDefault();
+  document.getElementById('upload-zone').classList.remove('dragging');
+  const file = event.dataTransfer.files[0];
+  if (file) processFile(file);
+}
+function handleFileSelect(event) {
+  const file = event.target.files[0];
+  if (file) processFile(file);
+}
+async function processFile(file) {
+  document.getElementById('upload-filename').textContent = '📄 ' + file.name;
+  const status = document.getElementById('upload-status');
+  status.className = 'small mt-1 text-info';
+  status.textContent = 'Extracting your profile with AI…';
 
-step3Back.addEventListener('click', () => goToStep(2));
-
-uploadZone.addEventListener('click', () => fileInput.click());
-uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
-uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
-uploadZone.addEventListener('drop', e => {
-  e.preventDefault(); uploadZone.classList.remove('drag-over');
-  if (e.dataTransfer.files[0]) handleFileUpload(e.dataTransfer.files[0]);
-});
-fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFileUpload(fileInput.files[0]); });
-
-async function handleFileUpload(file) {
-  uploadStatus.className = 'upload-status loading';
-  uploadStatus.textContent = '⏳ Gemini is reading your document…';
-  profileSum.classList.remove('visible');
   const fd = new FormData();
   fd.append('file', file);
   try {
     const r = await fetch('/api/upload_profile', { method: 'POST', body: fd });
-    const d = await r.json();
-    if (d.patient_profile) {
-      state.profile = d.patient_profile;
-      uploadStatus.className = 'upload-status success';
-      uploadStatus.textContent = '✅ Profile extracted successfully!';
-      renderProfileSummary(d.patient_profile);
-      // Pre-fill manual fields too
-      if (d.patient_profile.age)       document.getElementById('m-birthyear').value = new Date().getFullYear() - d.patient_profile.age;
-      if (d.patient_profile.sex)       document.getElementById('m-sex').value = d.patient_profile.sex.toUpperCase();
-      if (d.patient_profile.diagnosis) document.getElementById('m-diagnosis').value = d.patient_profile.diagnosis;
+    const data = await r.json();
+    if (data.patient_profile) {
+      wizState.extractedProfile = data.patient_profile;
+      // Pre-fill fields with extracted data
+      if (data.patient_profile.birthYear) {
+        document.getElementById('p-birthyear').value = data.patient_profile.birthYear;
+        wizState.birthYear = data.patient_profile.birthYear;
+      }
+      if (data.patient_profile.sex) {
+        const sel = document.getElementById('p-sex');
+        const opt = [...sel.options].find(o => o.value === data.patient_profile.sex.toUpperCase());
+        if (opt) { sel.value = opt.value; wizState.sex = opt.value; }
+      }
+      if (data.patient_profile.diagnosis) {
+        document.getElementById('p-diagnosis').value = data.patient_profile.diagnosis;
+        wizState.diagnosis = data.patient_profile.diagnosis;
+      }
+      status.className = 'small mt-1 text-success';
+      status.textContent = '✓ Profile extracted! Fields pre-filled below.';
     } else {
-      uploadStatus.className = 'upload-status error';
-      uploadStatus.textContent = '❌ ' + (d.error || 'Could not extract profile.');
+      status.className = 'small mt-1 text-warning';
+      status.textContent = 'Could not auto-extract – fill in manually.';
     }
-  } catch {
-    uploadStatus.className = 'upload-status error';
-    uploadStatus.textContent = '❌ Upload failed. Please try again or enter details manually.';
+  } catch(e) {
+    status.className = 'small mt-1 text-danger';
+    status.textContent = 'Upload failed. You can continue without it.';
   }
 }
 
-function renderProfileSummary(p) {
-  const rows = [
-    ['Age',        p.age       ? `${p.age} years` : null],
-    ['Sex',        p.sex       || null],
-    ['Diagnosis',  p.diagnosis || null],
-    ['Treatments', Array.isArray(p.prior_treatments) ? p.prior_treatments.join(', ') : (p.prior_treatments || null)],
-    ['Comorbidities', Array.isArray(p.comorbidities) ? p.comorbidities.join(', ') : (p.comorbidities || null)],
-  ].filter(r => r[1]);
-  if (!rows.length) return;
-  profileSum.innerHTML = rows.map(r =>
-    `<div class="ps-row"><span>${r[0]}</span><span class="ps-val">${r[1]}</span></div>`
-  ).join('');
-  profileSum.classList.add('visible');
+// ── Build review card ──────────────────────────────────────────────────────
+function buildReviewCard() {
+  const age = wizState.birthYear ? (new Date().getFullYear() - wizState.birthYear) + ' yrs' : 'Not set';
+  const sex = wizState.sex || 'Not set';
+  const diag = wizState.diagnosis || 'Not provided';
+  const meds = wizState.medications || 'Not provided';
+  const loc  = wizState.locationText || `${wizState.lat?.toFixed(2)}, ${wizState.lon?.toFixed(2)}`;
+  document.getElementById('review-card').innerHTML = `
+    <div class="row g-2">
+      <div class="col-6"><strong>Condition:</strong><br>${wizState.condition}</div>
+      <div class="col-6"><strong>Location:</strong><br>${loc} (${wizState.radius} km radius)</div>
+      <div class="col-6"><strong>Age:</strong> ${age}</div>
+      <div class="col-6"><strong>Sex:</strong> ${sex}</div>
+      <div class="col-12"><strong>Diagnoses:</strong> ${diag}</div>
+      <div class="col-12"><strong>Medications:</strong> ${meds}</div>
+    </div>`;
 }
 
-manualToggle.addEventListener('click', () => {
-  manualFields.classList.toggle('open');
-  manualToggle.textContent = manualFields.classList.contains('open')
-    ? '✕ Hide manual entry'
-    : '✏️ Enter details manually instead';
-});
+// ── Step navigation ────────────────────────────────────────────────────────
+async function wizNext() {
+  if (currentStep === 2 && wizState.locationText.trim() && !wizState.lat) {
+    showLoading('Resolving your location…');
+    await geocodeLocation(wizState.locationText);
+    hideLoading();
+  }
 
-function collectManualProfile() {
-  const by  = document.getElementById('m-birthyear').value.trim();
-  const sex = document.getElementById('m-sex').value;
-  const dx  = document.getElementById('m-diagnosis').value.trim();
-  const tx  = document.getElementById('m-treatments').value.trim();
-  const cmb = document.getElementById('m-comorbidities').value.trim();
-  if (!by && !sex && !dx) return null;
-  return {
-    age:               by  ? new Date().getFullYear() - parseInt(by) : undefined,
-    sex:               sex || undefined,
-    diagnosis:         dx  || undefined,
-    prior_treatments:  tx  ? tx.split(',').map(s=>s.trim()).filter(Boolean) : undefined,
-    comorbidities:     cmb ? cmb.split(',').map(s=>s.trim()).filter(Boolean) : undefined,
+  if (currentStep === TOTAL_STEPS) {
+    await launchSearch();
+    return;
+  }
+
+  document.getElementById('step-' + currentStep).classList.remove('active');
+  currentStep++;
+  document.getElementById('step-' + currentStep).classList.add('active');
+  updateDots(currentStep);
+
+  if (currentStep === 4) buildReviewCard();
+
+  document.getElementById('btn-back').style.visibility = currentStep > 1 ? 'visible' : 'hidden';
+  document.getElementById('btn-next').textContent = currentStep === TOTAL_STEPS ? '🔍 Find My Trials' : 'Next →';
+  syncNext();
+}
+
+function wizBack() {
+  document.getElementById('step-' + currentStep).classList.remove('active');
+  currentStep--;
+  document.getElementById('step-' + currentStep).classList.add('active');
+  updateDots(currentStep);
+  document.getElementById('btn-back').style.visibility = currentStep > 1 ? 'visible' : 'hidden';
+  document.getElementById('btn-next').textContent = currentStep === TOTAL_STEPS ? '🔍 Find My Trials' : 'Next →';
+  syncNext();
+}
+
+// ── Final launch: save profile then redirect to results ────────────────────
+async function launchSearch() {
+  showLoading('Running AI matching…');
+
+  // Build medical profile payload
+  const profile = {
+    condition: wizState.condition,
+    birthYear: wizState.birthYear,
+    sex: wizState.sex,
+    diagnosis: wizState.diagnosis || wizState.condition,
+    medications: wizState.medications,
+    ...(wizState.extractedProfile || {})
   };
-}
 
-async function launchSearch(profile) {
-  // Save profile to session if we have one
-  if (profile) {
-    try {
-      await fetch('/api/apply_medical_profile', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(profile)
-      });
-    } catch {}
-  }
-  // Redirect to main search with the condition + lat/lon as params
+  // Save profile if logged in
+  try {
+    await fetch('/api/apply_medical_profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile)
+    });
+  } catch(e) {}
+
+  // Redirect to homepage with search pre-filled
   const params = new URLSearchParams({
-    query: state.condition,
-    lat:   state.lat,
-    lon:   state.lon
+    query: wizState.condition,
+    lat:   wizState.lat,
+    lon:   wizState.lon,
+    radius: wizState.radius,
+    from_onboarding: '1'
   });
-  window.location.href = `/?${params.toString()}`;
+  window.location.href = '/?' + params.toString();
 }
 
-step3Next.addEventListener('click', async () => {
-  step3Next.disabled = true;
-  step3Next.textContent = 'Launching…';
-  const profile = state.profile || collectManualProfile();
-  await launchSearch(profile);
-});
+function showLoading(msg) {
+  document.getElementById('wiz-loading-msg').textContent = msg || 'Loading…';
+  document.getElementById('wiz-loading').classList.add('show');
+}
+function hideLoading() {
+  document.getElementById('wiz-loading').classList.remove('show');
+}
 
-skipProfile.addEventListener('click', async (e) => {
-  e.preventDefault();
-  await launchSearch(null);
-});
+// Init
+syncNext();
 </script>
 {% endblock %}
