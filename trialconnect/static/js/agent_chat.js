@@ -18,8 +18,8 @@ function tcToggleChat() {
             tcGreeted = true;
             const hasResults = tcTrialContext && tcTrialContext.trials && tcTrialContext.trials.length > 0;
             const greeting = hasResults
-                ? `Hi! 👋 I can see you searched for **${tcTrialContext.query}** near **${tcTrialContext.location}**. I have all ${tcTrialContext.trials.length} result(s) in context.\n\nAsk me anything — why you may or may not match a specific trial, what a trial involves, or which one looks most promising for you.`
-                : `Hi! 👋 I'm your TrialConnect AI assistant.\n\nSearch for trials above, then come back here — I'll have your full results in context and can help you understand eligibility, compare trials, or explain medical terms.`;
+                ? `Hi! 👋 I can see you searched for **${tcTrialContext.query}** near **${tcTrialContext.location}**. I have all **${tcTrialContext.trials.length} result(s)** in context, ready to help you.`
+                : `Hi! 👋 I'm your TrialConnect AI assistant.\n\nTo get started, please search for trials using the bar above. Once you have results, come back here — I'll have your full context and can help you understand eligibility, compare trials, or explain medical terms.`;
             tcAddMessage('bot', greeting);
         }
         setTimeout(() => document.getElementById('tc-chat-input').focus(), 100);
@@ -53,6 +53,17 @@ async function tcSendMessage() {
     const typingEl = tcAddMessage('bot', 'Thinking…');
     typingEl.classList.add('typing');
 
+    // Heuristic: update typing message based on likely agent action
+    let thinkingMessage = 'Thinking…';
+    if (text.toLowerCase().includes('search') || text.toLowerCase().includes('find')) {
+        thinkingMessage = 'AI is searching for trials…';
+    } else if (text.toLowerCase().includes('eligibility') || text.toLowerCase().includes('match')) {
+        thinkingMessage = 'AI is checking eligibility…';
+    } else if (tcTrialContext && tcTrialContext.trials && tcTrialContext.trials.length > 0) {
+        thinkingMessage = 'AI is analyzing results…';
+    }
+    typingEl.textContent = thinkingMessage;
+
     try {
         const payload = {
             message: text,
@@ -70,12 +81,15 @@ async function tcSendMessage() {
 
         if (data.reply) {
             tcAddMessage('bot', data.reply);
+        } else if (data.error) {
+            tcAddMessage('bot', `Sorry, an error occurred: ${data.error}`);
         } else {
-            tcAddMessage('bot', 'Sorry, I couldn\'t get a response. Please try again.');
+            tcAddMessage('bot', 'Sorry, I couldn\'t get a response from the AI agent. Please try again.');
         }
     } catch (err) {
         typingEl.remove();
-        tcAddMessage('bot', 'Connection error. Please check your network and try again.');
+        console.error("Agent chat connection error:", err);
+        tcAddMessage('bot', 'Connection error with the AI agent. Please check your network and try again.');
     }
 }
 

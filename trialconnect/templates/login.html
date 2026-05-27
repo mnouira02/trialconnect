@@ -14,7 +14,7 @@
                         <h3 class="text-center fw-bolder my-4">Login</h3>
                     </div>
                     <div class="card-body p-5">
-                        <form method="POST" action="{{ url_for('login') }}">
+                        <form method="POST" action="{{ url_for('routes.login') }}">
                             <!-- Email Input -->
                             <div class="form-floating mb-3">
                                 <input class="form-control" id="email" name="email" type="email" placeholder="name@example.com" required />
@@ -39,7 +39,7 @@
                                     <label class="form-check-label" for="inputRememberPassword">Remember Me</label>
                                 </div>
                                 <!-- MODIFIED: Link now points to the forgot_password route -->
-                                <a class="small" href="{{ url_for('forgot_password') }}">Forgot Password?</a>
+                                <a class="small" href="{{ url_for('routes.forgot_password') }}">Forgot Password?</a>
                             </div>
 
                             <!-- Full-width Login button -->
@@ -57,13 +57,13 @@
 
                         <!-- Social Auth Buttons -->
                         <div class="d-grid">
-                            <a class="btn btn-danger btn-lg" href="{{ url_for('login_google') }}">
+                            <a class="btn btn-danger btn-lg" href="{{ url_for('routes.login_google') }}">
                                 <i class="bi bi-google me-2"></i> Continue with Google
                             </a>
                         </div>
                     </div>
                     <div class="card-footer text-center py-3">
-                        <div class="small"><a href="{{ url_for('register') }}">Need an account? Sign up!</a></div>
+                        <div class="small"><a href="{{ url_for('routes.register') }}">Need an account? Sign up!</a></div>
                     </div>
                 </div>
             </div>

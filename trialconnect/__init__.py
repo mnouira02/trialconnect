@@ -1,9 +1,18 @@
 # trialconnect/__init__.py
 
-from flask import Flask, session, g, request
+from flask import Flask, session, g, request, current_app
 import os
 from dotenv import load_dotenv
 from helpers import init_db, close_db, get_user_by_remember_token
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+# global limiter instance
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",
+)
 
 def create_app():
     """Creates and configures the Flask application."""
@@ -13,7 +22,11 @@ def create_app():
 
     app = Flask(__name__)
 
+    limiter.init_app(app)
+
     # --- Load all config from environment ---
+    # app.secret_key MUST be a strong, static secret in production.
+    # Using os.urandom(24) is for development only and will invalidate sessions on restart.
     app.secret_key = os.environ.get('FLASK_SECRET_KEY') or os.urandom(24)
     app.config['GOOGLE_MAPS_API_KEY'] = os.environ.get('GOOGLE_MAPS_API_KEY')
     app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID')
@@ -35,8 +48,8 @@ def create_app():
     app.teardown_appcontext(close_db)
 
     # Import and register routes
-    with app.app_context():
-        from . import routes
+    from .routes import routes_bp
+    app.register_blueprint(routes_bp)
 
     # --- App-wide ADK agent runner (persists across requests) ---
     # This fixes the agent losing conversation memory between turns.

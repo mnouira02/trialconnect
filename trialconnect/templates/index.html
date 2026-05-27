@@ -15,35 +15,14 @@
                         Answer 4 quick questions and our AI will match you to the most relevant trials near you — in seconds.
                     </p>
 
-                    <!-- PRIMARY CTA: guided wizard -->
                     <div class="d-flex flex-column flex-sm-row gap-3 mb-4">
-                        <a href="{{ url_for('onboarding') }}" class="btn btn-primary btn-lg rounded-pill px-4 fw-semibold">
+                        <a href="{{ url_for('routes.onboarding') }}" class="btn btn-primary btn-lg rounded-pill px-4 fw-semibold">
                             🔍 Find My Trials &nbsp;<span class="badge bg-white text-primary ms-1" style="font-size:.75rem;">Guided</span>
                         </a>
-                        <button class="btn btn-outline-light btn-lg rounded-pill px-4"
-                                type="button"
-                                data-bs-toggle="collapse"
-                                data-bs-target="#quickSearchCollapse"
-                                aria-expanded="false">
-                            Quick Search
-                        </button>
-                    </div>
-
-                    <!-- Quick search (collapsed by default, auto-expanded if ?query= present) -->
-                    <div class="collapse {% if query %}show{% endif %}" id="quickSearchCollapse">
-                        <form method="GET" action="{{ url_for('index') }}">
-                            <div class="input-group input-group-lg">
-                                <input class="form-control" type="text" name="query"
-                                       placeholder="e.g., Lung Cancer, NCT04516746, London"
-                                       value="{{ query or '' }}" />
-                                <button class="btn btn-primary" type="submit">Search</button>
-                            </div>
-                        </form>
                     </div>
                 </div>
             </div>
 
-            <!-- Live stats widget -->
             <div class="col-lg-4 d-none d-lg-flex justify-content-end">
                 <div id="stats-widget" class="rounded-4 p-4 text-white text-center" style="background:rgba(255,255,255,.08);min-width:230px;">
                     <div class="mb-3 opacity-50 small text-uppercase fw-semibold">Platform Stats</div>
@@ -70,18 +49,33 @@
 {% if query %}
 <section class="py-5 bg-light">
     <div class="container px-5">
-        <h2 class="fw-bolder mb-4" id="map-view-title">Map View for "{{ query }}"</h2>
-        <div id="map" class="rounded" style="height: 500px; width: 100%;"></div>
-    </div>
-</section>
-
-<section class="py-5">
-    <div class="container px-5">
-        <div class="row gx-5" id="results-list-container">
-            <div class="col-12 text-center">
-                <p><i>Locating you and searching for trials...</i></p>
-                <div class="spinner-border text-primary" role="status">
-                    <span class="visually-hidden">Loading...</span>
+        <h2 class="fw-bolder mb-4" id="results-heading"></h2>
+        <ul class="nav nav-tabs mb-4" id="resultsTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="map-tab" data-bs-toggle="tab" data-bs-target="#map-view" type="button" role="tab" aria-controls="map-view" aria-selected="true">Map View</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="list-tab" data-bs-toggle="tab" data-bs-target="#list-view" type="button" role="tab" aria-controls="list-view" aria-selected="false">List View</button>
+            </li>
+        </ul>
+        <div class="tab-content" id="resultsTabContent">
+            <div class="tab-pane fade show active" id="map-view" role="tabpanel" aria-labelledby="map-tab" style="position: relative;">
+                <div id="map-loader" class="position-absolute top-50 start-50 translate-middle text-center d-flex flex-column align-items-center" style="z-index: 1000;">
+                    <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                        <span class="visually-hidden">Loading Map...</span>
+                    </div>
+                    <span class="mt-2 text-dark fw-semibold">Loading Map...</span>
+                </div>
+                <div id="map" class="rounded" style="height: 500px; width: 100%;"></div>
+            </div>
+            <div class="tab-pane fade" id="list-view" role="tabpanel" aria-labelledby="list-tab">
+                <div class="row gx-5" id="results-list-container">
+                    <div class="col-12 text-center">
+                        <p><i>Locating you and searching for trials...</i></p>
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -91,14 +85,13 @@
 {% endblock %}
 
 {% block scripts %}
-<!-- Load live stats on every page load -->
 <script>
 (async function loadStats() {
     try {
         const r = await fetch('/api/stats');
         const d = await r.json();
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val.toLocaleString(); };
-        set('stat-trials',      d.total_trials     || 0);
+        set('stat-trials',      d.total_trials      || 0);
         set('stat-recruiting',  d.recruiting        || 0);
         set('stat-conditions',  d.conditions_covered|| 0);
     } catch(e) {}
@@ -151,7 +144,6 @@
     let map;
     let infoWindow;
     let markerList = [];
-    let isInitialLoad = true;
 
     const FALLBACK_LAT = {{ fallback_lat|tojson }};
     const FALLBACK_LON = {{ fallback_lon|tojson }};
@@ -180,7 +172,7 @@
                `<span>Checking&hellip;</span></span>`;
     }
 
-    function resolvedBadgeHTML(status, verdict, confidence, reason, summary) {
+    function resolvedBadgeHTML(status, verdict, confidence, reason, summary, nctId) {
         let cls, icon, label;
         const v = (verdict || status || '').toUpperCase();
         if (v === 'MATCH') {
@@ -189,31 +181,57 @@
             cls = 'partial'; icon = '🔶'; label = 'Partial Match';
         } else if (v === 'NO_MATCH') {
             cls = 'no-match'; icon = '❌'; label = 'No Match';
+        } else if (v === 'NO_DATA') {
+            cls = 'unknown'; icon = '❓'; label = 'Profile Incomplete';
+        } else if (v === 'UNKNOWN' && confidence >= 60) {
+            cls = 'partial'; icon = '🔶'; label = 'Possibly';
+        } else if (confidence >= 60) {
+            cls = 'partial'; icon = '🔶'; label = 'Possibly';
         } else {
-            cls = 'unknown'; icon = ''; label = 'Checking AI…';
+            cls = 'unknown'; icon = ''; label = 'Unknown';
         }
-        const confText = (confidence !== undefined && confidence !== null)
+        const confText = (confidence !== undefined && confidence !== null && confidence > 0)
             ? ` <span style="opacity:0.7">${confidence}%</span>` : '';
-        let reasonLines = [];
-        if (summary) reasonLines.push(summary);
-        else if (reason) reasonLines.push(reason);
-        const reasonHTML = reasonLines.length
-            ? `<div class="match-reason-box">${reasonLines.map(l => `<div>${l}</div>`).join('')}</div>`
-            : '';
-        return `<span class="match-badge ${cls}" tabindex="0">
+
+        // Escape single quotes in strings for onclick
+        const escapedReason = (reason || '').replace(/'/g, '\\\'');
+        const escapedSummary = (summary || '').replace(/'/g, '\\\'');
+
+        return `<span class="match-badge ${cls}" tabindex="0" ${IS_LOGGED_IN ? `onclick="showEligibilityDetails('${v}', ${confidence || 0}, '${escapedReason}', '${escapedSummary}', '${nctId}')"` : ''}>
                     ${geminiSVG()}
                     ${icon} ${label}${confText}
-                    ${reasonHTML}
                 </span>`;
     }
 
     function updateResultCount(count, isLoading = false) {
-        const mapTitle = document.getElementById('map-view-title');
-        const queryText = `for</span> "${QUERY}"`;
-        if (!mapTitle) return;
-        if (isLoading) { mapTitle.innerHTML = `<i>Loading...</i>`; return; }
+        const resultsHeading = document.getElementById('results-heading');
+        if (!resultsHeading) return;
+        if (isLoading) {
+            resultsHeading.innerHTML = `<i>Loading ${QUERY ? 'results for "' + QUERY + '"...' : '...'}</i>`;
+            return;
+        }
         const pluralText = count === 1 ? '<span class="fw-normal">study' : '<span class="fw-normal">studies';
-        mapTitle.innerHTML = `${count} ${pluralText} found ${queryText}`;
+        resultsHeading.innerHTML = `${count} ${pluralText} found ${QUERY ? 'for</span> "' + QUERY + '"' : ''}`;
+    }
+
+    // Function to show eligibility details in a modal
+    function showEligibilityDetails(verdict, confidence, reason, summary, nctId) {
+        const modalBody = document.getElementById('eligibilityDetailModalBody');
+        if (!modalBody) return;
+
+        let reasonsArray = [];
+        if (summary && summary.trim() !== '' && summary.trim() !== 'null') reasonsArray.push(summary);
+        if (reason && reason.trim() !== '' && reason.trim() !== 'null' && reason !== summary) reasonsArray.push(reason);
+
+        let html = `<h6>${verdict || 'UNKNOWN'} <span class="text-muted">(${confidence || 0}%)</span></h6>`;
+        if (reasonsArray.length > 0) {
+            html += '<strong>AI Analysis:</strong><ul>';
+            reasonsArray.forEach(r => html += `<li>${r}</li>`);
+            html += '</ul>';
+        }
+        modalBody.innerHTML = html;
+        const modal = new bootstrap.Modal(document.getElementById('eligibilityDetailModal'));
+        modal.show();
     }
 
     function loadMapsAPI() {
@@ -227,6 +245,23 @@
     let resolveMapsApiReady;
     const mapsApiReady = new Promise(resolve => { resolveMapsApiReady = resolve; });
     window.onMapsApiReady = function() { resolveMapsApiReady(); };
+
+    async function reverseGeocode(lat, lon) {
+        try {
+            const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
+            const data = await r.json();
+            if (data && data.address) {
+                const city = data.address.city || data.address.town || data.address.village || data.address.suburb;
+                const country = data.address.country;
+                if (city && country) return `${city}, ${country}`;
+                if (city) return city;
+            }
+            if (data && data.display_name) {
+                return data.display_name.split(',').slice(0, 2).join(',').trim();
+            }
+        } catch(e) {}
+        return `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+    }
 
     function haversine(lat1, lon1, lat2, lon2) {
         const R = 6371;
@@ -265,45 +300,87 @@
         if (!el) return;
         el.outerHTML = resolvedBadgeHTML(
             data.status, data.verdict, data.confidence,
-            data.reason, data.plain_english_summary
+            data.reason, data.plain_english_summary, nctId
         );
+    }
+
+    window._nctMarkerMap = {};
+
+    function updateMapMarkerEligibility(nctId, status, confidence) {
+        const marker = window._nctMarkerMap[nctId];
+        if (!marker) return;
+        let color = "#42a5f5"; // Blue default
+        const s = (status || '').toUpperCase();
+        if (s === 'MATCH' || s === 'ELIGIBLE' || s === 'YES') {
+            color = "#10b981"; // Green
+        } else if (s === 'PARTIAL_MATCH' || s === 'POSSIBLE' || s === 'MAYBE' || (s === 'UNKNOWN' && confidence >= 60) || ((s === '' || s === 'UNKNOWN') && confidence >= 60)) {
+            color = "#f59e0b"; // Orange
+        } else if (s === 'NO_MATCH' || s === 'INELIGIBLE' || s === 'NO') {
+            color = "#ef4444"; // Red
+        } else if (s === 'NO_DATA') {
+            color = "#9ca3af"; // Gray
+        }
+        const icon = marker.getIcon();
+        if (icon) {
+            icon.fillColor = color;
+            marker.setIcon(icon);
+        }
     }
 
     async function fetchAllMatchStatuses(studies) {
         if (!IS_LOGGED_IN) return;
-        for (const study of studies) {
-            try {
-                const res = await fetch(`/api/check_match/${study.nctId}`);
-                const data = res.ok ? await res.json() : { status: 'NO_DATA' };
-                study.match_status  = data.verdict || data.status;
-                study.match_reason  = data.plain_english_summary || data.reason || '';
-                study.match_conf    = data.confidence;
-                injectResolvedBadge(study.nctId, data);
-            } catch (e) {
-                console.error(`Match check failed for ${study.nctId}:`, e);
-                study.match_status = 'NO_DATA';
+        
+        // Sequential matching (limit = 1) up to the first 3 distance-sorted trials to prevent Gemini 429 errors
+        const studiesToScan = studies.slice(0, 3);
+        const limit = 1;
+        let index = 0;
+        
+        async function worker() {
+            while (index < studiesToScan.length) {
+                const i = index++;
+                const study = studiesToScan[i];
+                try {
+                    const res = await fetch(`/api/check_match/${study.nctId}`);
+                    const data = res.ok ? await res.json() : { status: 'NO_DATA' };
+                    study.match_status  = data.verdict || data.status;
+                    study.match_reason  = data.plain_english_summary || data.reason || '';
+                    study.match_conf    = data.confidence;
+                    
+                    injectResolvedBadge(study.nctId, data);
+                    updateMapMarkerEligibility(study.nctId, study.match_status, study.match_conf);
+                } catch (e) {
+                    console.error(`Match check failed for ${study.nctId}:`, e);
+                    study.match_status = 'NO_DATA';
+                }
             }
         }
+        
+        const workers = Array(Math.min(limit, studiesToScan.length)).fill(null).map(worker);
+        await Promise.all(workers);
+
         studies.sort((a, b) => {
-            const diff = getSortGroup(a) - getSortGroup(b);
-            return diff !== 0 ? diff : (a.closest_distance_km||Infinity) - (b.closest_distance_km||Infinity);
+            const distA = a.closest_distance_km !== undefined ? a.closest_distance_km : Infinity;
+            const distB = b.closest_distance_km !== undefined ? b.closest_distance_km : Infinity;
+            return distA - distB;
         });
         buildResultsList(studies);
+        const mappedTrials = studies.map((s, i) => ({
+            rank: i + 1,
+            nctId: s.nctId,
+            briefTitle: s.title || s.briefTitle,
+            overallStatus: s.status || s.overallStatus,
+            closest_distance_km: s.closest_distance_km,
+            score: s.score,
+            conditions: Array.isArray(s.conditions) ? s.conditions.join(', ') : s.conditions,
+            eligibility_status: s.match_status || 'not checked',
+            eligibility_reason: s.match_reason || ''
+        }));
+        window._tcLastStudies = mappedTrials;
         if (typeof tcSetContext === 'function') {
             tcSetContext({
                 query: QUERY,
                 location: window._tcUserLocation || 'unknown location',
-                trials: studies.map((s, i) => ({
-                    rank: i + 1,
-                    nctId: s.nctId,
-                    briefTitle: s.title || s.briefTitle,
-                    overallStatus: s.status || s.overallStatus,
-                    closest_distance_km: s.closest_distance_km,
-                    score: s.score,
-                    conditions: Array.isArray(s.conditions) ? s.conditions.join(', ') : s.conditions,
-                    eligibility_status: s.match_status || 'not checked',
-                    eligibility_reason: s.match_reason || ''
-                }))
+                trials: mappedTrials
             });
         }
     }
@@ -315,7 +392,7 @@
             return;
         }
         let html = '';
-        studies.forEach(study => {
+        studies.forEach((study, idx) => {
             let cardClasses = 'card h-100 shadow border-0';
             let promotedBadgeHTML = '';
             let statusBadgeHTML  = '';
@@ -330,16 +407,16 @@
             if (study.match_status && study.match_status !== 'NO_DATA') {
                 matchBadgeHTML = resolvedBadgeHTML(
                     study.match_status, study.match_status,
-                    study.match_conf, study.match_reason, null
+                    study.match_conf, study.match_reason, null, study.nctId
                 );
-            } else if (IS_LOGGED_IN) {
+            } else if (IS_LOGGED_IN && idx < 3) {
                 matchBadgeHTML = spinnerHTML(study.nctId);
             }
             const distanceHTML = study.closest_distance_km !== undefined
                 ? `<div class="text-end ps-3" style="min-width:120px">
-                       <span class="h4 d-block mb-0">${Math.round(study.closest_distance_km)}</span>
-                       <span class="text-muted small">km</span>
-                   </div>` : '';
+                         <span class="h4 d-block mb-0">${Math.round(study.closest_distance_km)}</span>
+                         <span class="text-muted small">km</span>
+                     </div>` : '';
 
             // Trial title links to detail page (not external CT.gov)
             html += `
@@ -370,6 +447,7 @@
 
     function plotDataOnMap(studies, centerLat, centerLon) {
         clearMarkers();
+        window._nctMarkerMap = {}; // Reset nct mapping
         const bounds = new google.maps.LatLngBounds();
         bounds.extend({ lat: centerLat, lng: centerLon });
         const searchRadiusKM = 200;
@@ -401,6 +479,12 @@
             if (locGroup.studies.length > 1) { markerIcon.scale = 10; markerIcon.fillColor = "#0D47A1"; }
             const marker = new google.maps.Marker({ position: locGroup.position, map, icon: markerIcon });
             markerList.push(marker);
+            
+            // Link NCT IDs to this marker reference
+            locGroup.studies.forEach(s => {
+                window._nctMarkerMap[s.nctId] = marker;
+            });
+
             if (locGroup.studies.length > 1) {
                 marker.setLabel({ text: locGroup.studies.length.toString(), color: "white", fontWeight: "bold", fontSize: "11px" });
             }
@@ -418,14 +502,15 @@
             bounds.extend(locGroup.position);
         });
 
-        if (isInitialLoad) {
-            if (bounds.getNorthEast().equals(bounds.getSouthWest())) { map.setCenter(bounds.getCenter()); map.setZoom(11); }
-            else { map.fitBounds(bounds); }
-        }
+        if (bounds.getNorthEast().equals(bounds.getSouthWest())) { map.setCenter(bounds.getCenter()); map.setZoom(11); }
+        else { map.fitBounds(bounds); }
     }
 
     function initMapShell(centerLat, centerLon, defaultZoom) {
-        const mapStyle = [{"elementType":"geometry","stylers":[{"color":"#212121"}]},{"elementType":"labels.icon","stylers":[{"visibility":"off"}]},{"elementType":"labels.text.fill","stylers":[{"color":"#757575"}]},{"elementType":"labels.text.stroke","stylers":[{"color":"#212121"}]},{"featureType":"administrative","elementType":"geometry","stylers":[{"color":"#757575"}]},{"featureType":"administrative.country","elementType":"labels.text.fill","stylers":[{"color":"#9e9e9e"}]},{"featureType":"administrative.land_parcel","stylers":[{"visibility":"off"}]},{"featureType":"administrative.locality","elementType":"labels.text.fill","stylers":[{"color":"#bdbdbd"}]},{"featureType":"poi","stylers":[{"visibility":"off"}]},{"featureType":"road","elementType":"geometry.fill","stylers":[{"color":"#2c2c2c"}]},{"featureType":"road","elementType":"labels.icon","stylers":[{"visibility":"off"}]},{"featureType":"road.arterial","elementType":"geometry","stylers":[{"color":"#373737"}]},{"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#3c3c3c"}]},{"featureType":"road.highway.controlled_access","elementType":"geometry","stylers":[{"color":"#4e4e4e"}]},{"featureType":"road.local","elementType":"labels.text.fill","stylers":[{"color":"#616161"}]},{"featureType":"transit","stylers":[{"visibility":"off"}]},{"featureType":"water","elementType":"geometry","stylers":[{"color":"#000000"}]},{"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#3d3d3d"}]}];
+        const loader = document.getElementById('map-loader');
+        if (loader) loader.style.setProperty('display', 'none', 'important');
+
+        const mapStyle = [{"elementType":"geometry","stylers":[{"color":"#212121"}]},{"elementType":"labels.icon","stylers":[{"visibility":"off"}]},{"elementType":"labels.text.fill","stylers":[{"color":"#757575"}]},{"elementType":"labels.text.stroke","stylers":[{"color":"#212121"}]},{"featureType":"administrative","elementType":"geometry","stylers":[{"color":"#757575"}]},{"featureType":"administrative.country","elementType":"labels.text.fill","stylers":[{"color":"#9e9e9e"}]},{"featureType":"administrative.land_parcel","stylers":[{"visibility":"off"}]},{"featureType":"administrative.locality","elementType":"labels.text.fill","stylers":[{"color":"#bdbdbd"}]},{"featureType":"poi","stylers":[{"visibility":"off"}]},{"featureType":"road","elementType":"geometry.fill","stylers":[{"color":"#2c2c2c"}]},{"featureType":"road","elementType":"labels.icon","stylers":[{"visibility":"off"}]},{"featureType":"road.arterial","elementType":"geometry","stylers":[{"color":"#373737"}]},{"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#3c3c3c"}]},{"featureType":"road.highway.controlled_access","stylers":[{"color":"#4e4e4e"}]},{"featureType":"road.local","elementType":"labels.text.fill","stylers":[{"color":"#616161"}]},{"featureType":"transit","stylers":[{"visibility":"off"}]},{"featureType":"water","elementType":"geometry","stylers":[{"color":"#000000"}]},{"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#3d3d3d"}]}];
         map = new google.maps.Map(document.getElementById('map'), {
             center: { lat: centerLat, lng: centerLon }, zoom: defaultZoom, styles: mapStyle,
             gestureHandling: "cooperative", zoomControl: true, mapTypeControl: false,
@@ -442,8 +527,10 @@
         Object.assign(searchAreaButton.style, { backgroundColor:"#fff", color:"#333", border:"none", borderRadius:"4px", padding:"8px 12px", fontSize:"14px", fontWeight:"bold", boxShadow:"0 2px 6px rgba(0,0,0,.3)", cursor:"pointer", minWidth:"145px", textAlign:"center", marginTop:"10px", display:"none" });
         map.controls[google.maps.ControlPosition.TOP_CENTER].push(searchAreaButton);
         map.addListener('idle', () => {
-            if (isInitialLoad) { isInitialLoad = false; }
-            else { searchAreaButton.style.display = "block"; searchAreaButton.disabled = false; searchAreaButton.textContent = "Search This Area"; }
+            // The button only appears after initial load and map movement
+            searchAreaButton.style.display = "block";
+            searchAreaButton.disabled = false;
+            searchAreaButton.textContent = "Search This Area";
         });
         map.addListener('dragstart', () => { searchAreaButton.style.display = "none"; });
         searchAreaButton.addEventListener('click', async () => {
@@ -455,21 +542,37 @@
     }
 
     async function fetchAndRenderTrials(query, lat, lon, radius) {
-        const container = document.getElementById('results-list-container');
+        const listContainer = document.getElementById('results-list-container');
+        const listTabButton = document.getElementById('list-tab');
+
         try {
-            container.innerHTML = `<div class="col-12 text-center"><p><i>Searching for trials...</i></p><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>`;
+            listContainer.innerHTML = `<div class="col-12 text-center"><p><i>Searching for trials...</i></p><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>`;
             updateResultCount(0, true);
+
             const res = await fetch(`/api/search?query=${encodeURIComponent(query)}&lat=${lat}&lon=${lon}&radius=${radius}`);
             if (!res.ok) throw new Error('API request failed');
             const studies = await res.json();
+
+            studies.sort((a, b) => {
+                const distA = a.closest_distance_km !== undefined ? a.closest_distance_km : Infinity;
+                const distB = b.closest_distance_km !== undefined ? b.closest_distance_km : Infinity;
+                return distA - distB;
+            });
+
             updateResultCount(studies.length);
             plotDataOnMap(studies, lat, lon);
             buildResultsList(studies);
             await fetchAllMatchStatuses(studies);
+
+            // Activate the List View tab after results are loaded
+            if (listTabButton) {
+                bootstrap.Tab.getInstance(listTabButton)?.show();
+            }
+
         } catch (e) {
             console.error("fetchAndRenderTrials error:", e);
             updateResultCount(0);
-            container.innerHTML = '<div class="col-12"><p class="text-center text-danger">An error occurred while fetching results.</p></div>';
+            listContainer.innerHTML = '<div class="col-12"><p class="text-center text-danger">An error occurred while fetching results.</p></div>';
         }
     }
 
@@ -482,18 +585,50 @@
             } catch { searchLat = FALLBACK_LAT; searchLon = FALLBACK_LON; }
 
             window._tcUserLocation = `${searchLat.toFixed(2)}, ${searchLon.toFixed(2)}`;
+            try {
+                reverseGeocode(searchLat, searchLon).then(cityStr => {
+                    window._tcUserLocation = cityStr;
+                    if (typeof tcSetContext === 'function' && window._tcLastStudies) {
+                        tcSetContext({
+                            query: QUERY,
+                            location: window._tcUserLocation,
+                            trials: window._tcLastStudies
+                        });
+                    }
+                });
+            } catch(e) {}
 
             try {
+                // 1. Kick off maps API load and search query fetch in parallel
                 loadMapsAPI();
                 const dataPromise = fetch(`/api/search?query=${encodeURIComponent(QUERY)}&lat=${searchLat}&lon=${searchLon}&radius=200`);
-                const [, dataResponse] = await Promise.all([mapsApiReady, dataPromise]);
+                
+                // 2. Wait for Google Maps to be ready, and build map shell immediately
+                await mapsApiReady;
+                initMapShell(searchLat, searchLon, 9);
+
+                // 3. Wait for search query response and plot markers onto the map shell
+                const dataResponse = await dataPromise;
                 if (!dataResponse.ok) throw new Error('API request failed');
                 const studies = await dataResponse.json();
-                initMapShell(searchLat, searchLon, 9);
+
+                studies.sort((a, b) => {
+                    const distA = a.closest_distance_km !== undefined ? a.closest_distance_km : Infinity;
+                    const distB = b.closest_distance_km !== undefined ? b.closest_distance_km : Infinity;
+                    return distA - distB;
+                });
+
                 plotDataOnMap(studies, searchLat, searchLon);
                 buildResultsList(studies);
                 updateResultCount(studies.length);
                 await fetchAllMatchStatuses(studies);
+
+                // Activate the List View tab after initial load
+                const listTabButton = document.getElementById('list-tab');
+                if (listTabButton) {
+                    bootstrap.Tab.getInstance(listTabButton)?.show();
+                }
+
             } catch (e) {
                 console.error("runSearch error:", e);
                 document.getElementById('results-list-container').innerHTML =

@@ -95,7 +95,7 @@
           <p class="text-muted small mt-2 mb-0">Uses your saved medical profile + Gemini AI to analyse this trial's criteria.</p>
         {% else %}
           <p class="mb-2">Log in to get an AI-powered eligibility assessment for this trial.</p>
-          <a href="{{ url_for('login') }}" class="btn btn-outline-primary rounded-pill">
+          <a href="{{ url_for('routes.login') }}" class="btn btn-outline-primary rounded-pill">
             <i class="bi bi-person me-1"></i> Log in to check eligibility
           </a>
         {% endif %}
@@ -146,19 +146,7 @@
         </a>
       </div>
 
-      <!-- Contacts -->
-      {% if trial.contacts %}
-      <div class="section-card">
-        <h5>📞 Contacts</h5>
-        {% for c in trial.contacts[:3] %}
-          <div class="mb-2" style="font-size:.88rem;">
-            <strong>{{ c.name or 'Contact' }}</strong><br>
-            {% if c.email %}<a href="mailto:{{ c.email }}">{{ c.email }}</a><br>{% endif %}
-            {% if c.phone %}<span class="text-muted">{{ c.phone }}</span>{% endif %}
-          </div>
-        {% endfor %}
-      </div>
-      {% endif %}
+
 
     </div><!-- /col right -->
   </div><!-- /row -->
@@ -195,7 +183,7 @@
       <i class="bi bi-shield-check me-1"></i> Check My Eligibility
     </button>
     {% endif %}
-    <a href="{{ url_for('onboarding') }}" class="btn btn-outline-primary rounded-pill">
+    <a href="{{ url_for('routes.onboarding') }}" class="btn btn-outline-primary rounded-pill">
       🔍 New search
     </a>
   </div>
@@ -204,28 +192,68 @@
 {% endblock %}
 
 {% block scripts %}
+<!-- Google Maps Javascript API -->
+<script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&loading=async&callback=initGoogleMap"></script>
 <script>
 // ── Map init ────────────────────────────────────────────────────────────────
 const locations = {{ trial.locations | tojson }};
-if (locations.length > 0) {
-  const map = L.map('map');
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
+const contacts = {{ (trial.contacts or []) | tojson }};
+let map, infoWindow;
 
-  const group = [];
+window.initGoogleMap = function() {
+  if (locations.length === 0) return;
+
+  const mapStyle = [{"elementType":"geometry","stylers":[{"color":"#212121"}]},{"elementType":"labels.icon","stylers":[{"visibility":"off"}]},{"elementType":"labels.text.fill","stylers":[{"color":"#757575"}]},{"elementType":"labels.text.stroke","stylers":[{"color":"#212121"}]},{"featureType":"administrative","elementType":"geometry","stylers":[{"color":"#757575"}]},{"featureType":"administrative.country","elementType":"labels.text.fill","stylers":[{"color":"#9e9e9e"}]},{"featureType":"administrative.land_parcel","stylers":[{"visibility":"off"}]},{"featureType":"administrative.locality","elementType":"labels.text.fill","stylers":[{"color":"#bdbdbd"}]},{"featureType":"poi","stylers":[{"visibility":"off"}]},{"featureType":"road","elementType":"geometry.fill","stylers":[{"color":"#2c2c2c"}]},{"featureType":"road","elementType":"labels.icon","stylers":[{"visibility":"off"}]},{"featureType":"road.arterial","elementType":"geometry","stylers":[{"color":"#373737"}]},{"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#3c3c3c"}]},{"featureType":"road.highway.controlled_access","stylers":[{"color":"#4e4e4e"}]},{"featureType":"road.local","elementType":"labels.text.fill","stylers":[{"color":"#616161"}]},{"featureType":"transit","stylers":[{"visibility":"off"}]},{"featureType":"water","elementType":"geometry","stylers":[{"color":"#000000"}]},{"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#3d3d3d"}]}];
+  
+  map = new google.maps.Map(document.getElementById('map'), {
+    styles: mapStyle,
+    gestureHandling: "cooperative", zoomControl: true, mapTypeControl: false,
+    scaleControl: false, streetViewControl: false, rotateControl: false, fullscreenControl: false,
+    zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM }
+  });
+  infoWindow = new google.maps.InfoWindow();
+
+  const bounds = new google.maps.LatLngBounds();
+  let hasMarkers = false;
+
   locations.forEach(loc => {
     const gp = loc.geoPoint || {};
-    const lat = gp.lat || loc.lat;
-    const lon = gp.lon || loc.lon;
-    if (lat && lon) {
-      const m = L.marker([lat, lon]).addTo(map);
+    const lat = parseFloat(gp.lat || loc.lat);
+    const lon = parseFloat(gp.lon || loc.lon);
+    if (!isNaN(lat) && !isNaN(lon)) {
+      const position = { lat, lng: lon };
+      const marker = new google.maps.Marker({
+        position,
+        map,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 7,
+          fillColor: "#42a5f5",
+          fillOpacity: 1,
+          strokeColor: "white",
+          strokeWeight: 1.5
+        }
+      });
+
       const label = [loc.facility, loc.city, loc.country].filter(Boolean).join(', ');
-      m.bindPopup(label);
-      group.push([lat, lon]);
+      marker.addListener('click', () => {
+        infoWindow.setContent(`<div style="padding:8px;font-size:0.9rem;color:#333;"><strong>${loc.facility || 'Trial Site'}</strong><br>${loc.city || ''}, ${loc.country || ''}</div>`);
+        infoWindow.open(map, marker);
+      });
+
+      bounds.extend(position);
+      hasMarkers = true;
     }
   });
-  if (group.length) map.fitBounds(group, { padding: [30, 30] });
+
+  if (hasMarkers) {
+    if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
+      map.setCenter(bounds.getCenter());
+      map.setZoom(11);
+    } else {
+      map.fitBounds(bounds);
+    }
+  }
 }
 
 // ── AI eligibility check ─────────────────────────────────────────────────
@@ -241,19 +269,100 @@ async function checkMyMatch() {
     const data = await r.json();
 
     let cls = 'unchecked', icon = '❓', label = 'Eligibility Unknown';
-    const status = (data.status || data.eligibility_status || '').toUpperCase();
-    if (status === 'ELIGIBLE' || status === 'YES') {
-      cls = 'eligible';   icon = '✅'; label = 'Likely Eligible';
-    } else if (status === 'INELIGIBLE' || status === 'NO') {
-      cls = 'ineligible'; icon = '❌'; label = 'Likely Not Eligible';
-    } else if (status === 'POSSIBLY_ELIGIBLE' || status === 'POSSIBLE' || status === 'MAYBE') {
-      cls = 'possible';   icon = '⚠️'; label = 'Possibly Eligible';
+    const status = (data.status || data.verdict || '').toUpperCase();
+    const conf = data.confidence || 0;
+
+    if (status === 'MATCH') {
+      cls = 'eligible';   icon = '✅'; label = `Likely Match (${conf}%)`;
+    } else if (status === 'PARTIAL_MATCH') {
+      cls = 'possible';   icon = '🔶'; label = `Possible Match (${conf}%)`;
+    } else if (status === 'NO_MATCH') {
+      cls = 'ineligible'; icon = '❌'; label = `Not a Match (${conf}%)`;
+    } else if (status === 'UNKNOWN' && conf >= 60) {
+      cls = 'possible';   icon = '🔶'; label = `Possibly (${conf}%)`;
+    } else if (conf >= 60) {
+      cls = 'possible';   icon = '🔶'; label = `Possibly (${conf}%)`;
     }
 
-    const reason = data.reason || data.eligibility_reason || '';
-    box.innerHTML = `
-      <div class="match-badge ${cls} mb-2">${icon} ${label}</div>
-      ${reason ? `<p class="small text-muted mb-0 mt-2">${reason}</p>` : ''}`;
+    let detailHtml = `<div class="match-badge ${cls} mb-3">${icon} ${label}</div>`;
+    
+    // 1. Plain English Summary
+    if (data.plain_english_summary || data.reason) {
+        const summaryText = data.plain_english_summary || data.reason;
+        detailHtml += `
+            <div class="p-3 bg-light rounded-3 mb-3 border-start border-primary border-3">
+                <strong class="text-primary d-block mb-1 small">AI Analysis Summary</strong>
+                <p class="mb-0 small text-dark" style="line-height: 1.4;">${summaryText}</p>
+            </div>
+        `;
+    }
+    
+    // 2. Match Reasons
+    if (data.match_reasons && data.match_reasons.length > 0) {
+        detailHtml += `
+            <div class="p-3 mb-3 rounded-3" style="background:#f0fdf4; border-left:4px solid #16a34a;">
+                <strong style="color:#15803d; font-size:0.88rem;" class="d-block mb-2">🟢 Met Criteria:</strong>
+                <ul class="mb-0 ps-3 small text-dark" style="line-height: 1.4;">
+                    ${data.match_reasons.map(r => `<li class="py-1">${r}</li>`).join('')}
+                </ul>
+            </div>
+        `;
+    }
+    
+    // 3. Exclusions
+    if (data.exclusion_flags && data.exclusion_flags.length > 0) {
+        detailHtml += `
+            <div class="p-3 mb-3 rounded-3" style="background:#fef2f2; border-left:4px solid #dc2626;">
+                <strong style="color:#b91c1c; font-size:0.88rem;" class="d-block mb-2">🔴 Disqualifications / Blockers:</strong>
+                <ul class="mb-0 ps-3 small text-dark" style="line-height: 1.4;">
+                    ${data.exclusion_flags.map(r => `<li class="py-1">${r}</li>`).join('')}
+                </ul>
+            </div>
+        `;
+    }
+    
+    // 4. Missing Info
+    if (data.missing_info && data.missing_info.length > 0) {
+        detailHtml += `
+            <div class="p-3 mb-3 rounded-3" style="background:#fffbeb; border-left:4px solid #d97706;">
+                <strong style="color:#b45309; font-size:0.88rem;" class="d-block mb-2">🟡 Unspecified / Missing Information:</strong>
+                <ul class="mb-0 ps-3 small text-dark" style="line-height: 1.4;">
+                    ${data.missing_info.map(r => `<li class="py-1">${r}</li>`).join('')}
+                </ul>
+            </div>
+        `;
+    }
+
+    // 5. Primary Contacts / PI Highlight (Action Card)
+    if ((status === 'MATCH' || status === 'PARTIAL_MATCH' || conf >= 80) && contacts && contacts.length > 0) {
+        let contactsHtml = `
+            <div class="p-3 mb-3 rounded-3 shadow-sm border border-success bg-white">
+                <strong class="text-success d-block mb-1 small"><i class="bi bi-person-fill-check me-1"></i> Contact Study Coordinator to Confirm:</strong>
+                <p class="small text-muted mb-2" style="font-size:0.82rem; line-height: 1.35;">You seem to meet the eligibility criteria! Please contact the primary study team to verify eligibility and coordinate next steps:</p>
+        `;
+        contacts.forEach(c => {
+            contactsHtml += `
+                <div class="mb-2 last-border-none" style="font-size:0.85rem; line-height: 1.35;">
+                    <strong class="text-dark">${c.name || 'Coordinator / PI'}</strong><br>
+                    ${c.email ? `<a href="mailto:${c.email}" class="text-decoration-none small"><i class="bi bi-envelope me-1"></i> ${c.email}</a><br>` : ''}
+                    ${c.phone ? `<span class="text-muted small"><i class="bi bi-telephone me-1"></i> ${c.phone}</span>` : ''}
+                </div>
+            `;
+        });
+        contactsHtml += `</div>`;
+        detailHtml += contactsHtml;
+    }
+
+    // 6. Official Protocol Link
+    detailHtml += `
+        <div class="mt-3 text-end">
+            <a href="https://clinicaltrials.gov/study/${data.nctId || '{{ trial.nctId }}'}" target="_blank" class="small text-decoration-none">
+                <i class="bi bi-box-arrow-up-right me-1"></i> See Full Official Study Protocol on ClinicalTrials.gov
+            </a>
+        </div>
+    `;
+
+    box.innerHTML = detailHtml;
     box.style.display = 'block';
   } catch(e) {
     box.innerHTML = '<p class="text-danger small mb-0">Check failed. Please try again.</p>';
@@ -264,7 +373,4 @@ async function checkMyMatch() {
   btn.innerHTML = '<i class="bi bi-shield-check me-1"></i> Re-check Eligibility';
 }
 </script>
-<!-- Leaflet for map -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 {% endblock %}

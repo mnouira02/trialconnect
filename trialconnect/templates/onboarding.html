@@ -354,16 +354,35 @@ function syncNext() {
 }
 
 // ── Geolocation ──────────────────────────────────────────────────────────
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
+    const data = await r.json();
+    if (data && data.address) {
+      const city = data.address.city || data.address.town || data.address.village || data.address.suburb;
+      const country = data.address.country;
+      if (city && country) return `${city}, ${country}`;
+      if (city) return city;
+    }
+    if (data && data.display_name) {
+      return data.display_name.split(',').slice(0, 2).join(',').trim();
+    }
+  } catch(e) {}
+  return `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+}
+
 function useMyLocation() {
   const geo = document.getElementById('geo-status');
   geo.textContent = 'Locating you…';
   navigator.geolocation.getCurrentPosition(
-    pos => {
+    async pos => {
       wizState.lat = pos.coords.latitude;
       wizState.lon = pos.coords.longitude;
-      wizState.locationText = `${pos.coords.latitude.toFixed(3)}, ${pos.coords.longitude.toFixed(3)}`;
+      geo.textContent = '✓ Location detected. Resolving address…';
+      const cityStr = await reverseGeocode(pos.coords.latitude, pos.coords.longitude);
+      wizState.locationText = cityStr;
       document.getElementById('loc-input').value = wizState.locationText;
-      geo.textContent = '✓ Location detected';
+      geo.textContent = '✓ Location resolved: ' + cityStr;
       syncNext();
     },
     () => { geo.className = 'small text-danger mt-2'; geo.textContent = 'Could not detect location – please type it.'; }
@@ -518,7 +537,7 @@ async function launchSearch() {
     radius: wizState.radius,
     from_onboarding: '1'
   });
-  window.location.href = '/?' + params.toString();
+  window.location.href = `{{ url_for('routes.index') }}?${params.toString()}`;
 }
 
 function showLoading(msg) {

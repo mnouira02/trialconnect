@@ -14,7 +14,7 @@
                         <h3 class="text-center fw-bolder my-4">Set New Password</h3>
                     </div>
                     <div class="card-body p-5">
-                        <form method="POST" action="{{ url_for('reset_with_token') }}">
+                        <form method="POST" action="{{ url_for('routes.reset_with_token') }}">
                             <!-- Email Input -->
                             <div class="form-floating mb-3">
                                 <input class="form-control" id="email" name="email" type="email" placeholder="name@example.com" autocomplete="username" required />
@@ -64,7 +64,7 @@
                         </form>
                     </div>
                     <div class="card-footer text-center py-3">
-                        <div class="small"><a href="{{ url_for('login') }}">Back to login</a></div>
+                        <div class="small"><a href="{{ url_for('routes.login') }}">Back to login</a></div>
                     </div>
                 </div>
             </div>

@@ -1,16 +1,30 @@
 import datetime
 import os, re, math
 from werkzeug.security import generate_password_hash
-from flask import g
-import secrets, requests, warnings
+from flask import g, current_app
+import secrets, requests, warnings, json
 from pymongo import MongoClient, ASCENDING, TEXT
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
+import vertexai
+from vertexai.language_models import TextEmbeddingModel
+from google.api_core.exceptions import GoogleAPIError
+from google.genai.types import GenerateContentResponse
+from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadTimeSignature
 
 # Suppress residual SSL warnings globally
-warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+# WARNING: Suppressing SSL warnings is NOT recommended for production environments.
+# Ensure proper SSL certificate validation in a deployed application.
+# warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
+# Constants for search and scoring
+DEFAULT_SEARCH_RADIUS_KM = 300
+DEFAULT_SEARCH_PAGE_SIZE = 100 # For ClinicalTrials.gov API and MongoDB text search fallback
+VECTOR_SEARCH_NUM_CANDIDATES = 300
+VECTOR_SEARCH_LIMIT = 150
+DISTANCE_DECAY_FACTOR = 300 # Used in score_trial haversine calculation
 
 # =============================================================================
 # MongoDB — single shared client per app context
@@ -161,8 +175,41 @@ def validate_password_strength(password):
     return errors
 
 
+def generate_reset_token(email):
+    serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
+    return serializer.dumps(email, salt='password-reset-salt')
+
+
+def verify_reset_token(token, expiration=3600): # 1 hour default expiration
+    serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
+    try:
+        email = serializer.loads(token, salt='password-reset-salt', max_age=expiration)
+    except SignatureExpired:
+        return None # Token is expired
+    except BadTimeSignature:
+        return None # Token is invalid
+    return email
+
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def is_image_by_magic_bytes(file_stream):
+    file_stream.seek(0) # Go to the beginning of the file
+    header = file_stream.read(8)
+    file_stream.seek(0) # Reset stream position for subsequent reads
+
+    # GIF (GIF87a, GIF89a)
+    if header.startswith(b'GIF87a') or header.startswith(b'GIF89a'):
+        return True
+    # PNG
+    if header.startswith(b'\x89PNG\x0D\x0A\x1A\x0A'):
+        return True
+    # JPEG (various magic bytes)
+    if header.startswith(b'\xFF\xD8\xFF'):
+        return True
+
+    return False
 
 
 # =============================================================================
@@ -271,7 +318,7 @@ def score_trial(trial, patient_profile):
             if loc.get("lat") and loc.get("lon")
         ]
         if distances:
-            distance_score = math.exp(-min(distances) / 300)
+            distance_score = math.exp(-min(distances) / DISTANCE_DECAY_FACTOR)
     except (KeyError, TypeError):
         pass
     return round((0.70 * vector_score) + (0.30 * distance_score), 4)
@@ -350,7 +397,7 @@ def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
         "query.cond": query,
         "filter.overallStatus": "RECRUITING,NOT_YET_RECRUITING,AVAILABLE",
         "filter.geo": geo_filter,
-        "pageSize": 100,
+        "pageSize": DEFAULT_SEARCH_PAGE_SIZE,
         "format": "json"
     }
     data = _fetch(params)
@@ -397,29 +444,63 @@ def search_clinical_trials(query, user_lat, user_lon, radius=100, unit="km"):
 # MongoDB Atlas Trial Search
 # =============================================================================
 
+def _get_genai_client():
+    from google import genai
+    project = os.environ.get('GOOGLE_CLOUD_PROJECT')
+    location = os.environ.get('VERTEX_AI_LOCATION') or os.environ.get('GOOGLE_CLOUD_LOCATION') or 'us-central1'
+    if location == 'global':
+        location = 'us-central1'
+    
+    # Try Vertex AI first (if ADC is configured)
+    try:
+        adc_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+        default_adc_path = os.path.expanduser('~/.config/gcloud/application_default_credentials.json')
+        default_adc_path_win = os.path.expandvars('%APPDATA%/gcloud/application_default_credentials.json')
+        if adc_path or os.path.exists(default_adc_path) or os.path.exists(default_adc_path_win):
+            print(f"[GEMINI SETUP] Initializing Vertex AI client (project={project}, location={location}) using Application Default Credentials.")
+            return genai.Client(vertexai=True, project=project, location=location)
+    except Exception as e:
+        print(f"[GEMINI SETUP] Vertex AI initialization check encountered error: {e}")
+    
+    # Fallback to standard Gemini API using the maps/general API key
+    api_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_MAPS_API_KEY')
+    if api_key:
+        masked_key = api_key[:6] + "..." if len(api_key) > 6 else "None"
+        print(f"[GEMINI SETUP] Falling back to Google AI Studio Gemini developer client using API Key: {masked_key}")
+        return genai.Client(vertexai=False, api_key=api_key)
+    
+    print(f"[GEMINI SETUP] No local API key found. Attempting ultimate fallback to Vertex AI (project={project}, location={location}).")
+    # Ultimate fallback
+    return genai.Client(vertexai=True, project=project, location=location)
+
+
 def get_text_embedding(text):
-    """Generate a query embedding using text-embedding-005.
-    MUST match the model used in seed_mongodb.py.
-    """
+    """Generate a query embedding using text-embedding-005 (or text-embedding-004 for fallback)."""
     project = os.environ.get('GOOGLE_CLOUD_PROJECT')
     if not project:
         return None
     try:
         from google import genai
         from google.genai import types
-        client = genai.Client(vertexai=True, project=project, location='global')
+        client = _get_genai_client()
+        model_name = 'text-embedding-005'
+        if not getattr(client, 'vertexai', True):
+            model_name = 'text-embedding-004'
         result = client.models.embed_content(
-            model='text-embedding-005',
+            model=model_name,
             contents=text[:3072],
             config=types.EmbedContentConfig(task_type='RETRIEVAL_QUERY')
         )
         return result.embeddings[0].values
+    except GoogleAPIError as e:
+        print(f"Embedding generation failed due to Google API error: {e}")
+        return None
     except Exception as e:
-        print(f"Embedding generation failed: {e}")
+        print(f"Embedding generation failed due to unexpected error: {e}")
         return None
 
 
-def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
+def search_trials_mongo(query, user_lat, user_lon, radius_km=DEFAULT_SEARCH_RADIUS_KM):
     """Search trials in MongoDB Atlas.
 
     Strategy (in order):
@@ -449,8 +530,8 @@ def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
                     "index": "eligibility_vector_index",
                     "path": "eligibility_criteria_embedding",
                     "queryVector": query_embedding,
-                    "numCandidates": 300,
-                    "limit": 150
+                    "numCandidates": VECTOR_SEARCH_NUM_CANDIDATES,
+                    "limit": VECTOR_SEARCH_LIMIT
                 }},
                 {"$addFields": {"vector_score": {"$meta": "vectorSearchScore"}}},
                 {"$match": {"overall_status": {"$in": ["RECRUITING", "NOT_YET_RECRUITING", "AVAILABLE"]}}},
@@ -485,7 +566,7 @@ def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
                     "locations": 1, "eligibility_criteria": 1, "interventions": 1,
                     "text_score": {"$meta": "textScore"}
                 }
-            ).sort([("text_score", {"$meta": "textScore"})]).limit(100))
+            ).sort([("text_score", {"$meta": "textScore"})]).limit(DEFAULT_SEARCH_PAGE_SIZE))
 
             for doc in results:
                 doc['vector_score'] = float(doc.get('text_score', 0)) + _condition_boost(query, doc)
@@ -493,8 +574,11 @@ def search_trials_mongo(query, user_lat, user_lon, radius_km=200):
             results.sort(key=lambda x: x.get('vector_score', 0), reverse=True)
             return results
 
-    except Exception as e:
+    except pymongo.errors.PyMongoError as e:
         print(f"MongoDB search failed: {e} — falling back to ClinicalTrials.gov API")
+        return search_clinical_trials(query, user_lat, user_lon, radius_km)
+    except Exception as e: # Catch any other unexpected errors
+        print(f"Unexpected error during MongoDB search: {e} — falling back to ClinicalTrials.gov API")
         return search_clinical_trials(query, user_lat, user_lon, radius_km)
 
 
@@ -506,16 +590,21 @@ def fetch_trial_eligibility_text(nct_id):
             trial = db['trials'].find_one({"nct_id": nct_id}, {"_id": 0, "eligibility_criteria": 1})
             if trial and trial.get("eligibility_criteria"):
                 return trial["eligibility_criteria"]
-        except Exception as e:
-            print(f"MongoDB eligibility fetch failed for {nct_id}: {e}")
+        except pymongo.errors.PyMongoError as e:
+            print(f"MongoDB eligibility fetch failed for {nct_id} due to database error: {e}")
+        except Exception as e: # Catch other MongoDB related issues
+            print(f"MongoDB eligibility fetch failed for {nct_id} due to unexpected error: {e}")
     try:
         url = f"https://clinicaltrials.gov/api/v2/studies/{nct_id}?fields=EligibilityModule"
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         eligibility = response.json().get("protocolSection", {}).get("eligibilityModule", {})
         return eligibility.get("eligibilityCriteria")
+    except requests.exceptions.RequestException as e:
+        print(f"CT.gov eligibility fetch failed for {nct_id} due to network/API error: {e}")
+        return None
     except Exception as e:
-        print(f"CT.gov eligibility fetch failed for {nct_id}: {e}")
+        print(f"CT.gov eligibility fetch failed for {nct_id} due to unexpected error: {e}")
         return None
 
 
@@ -569,8 +658,11 @@ def check_user_study_match(user_profile, nct_id):
 
 def gemini_eligibility_check(patient_profile, eligibility_criteria_text, nct_id):
     import json
+    import traceback
     project = os.environ.get('GOOGLE_CLOUD_PROJECT')
+    print(f"[GEMINI MATCH] Starting eligibility check for trial: {nct_id}")
     if not project:
+        print("[GEMINI MATCH] Error: GOOGLE_CLOUD_PROJECT is not set.")
         return {
             "verdict": "UNKNOWN", "confidence": 0, "match_reasons": [],
             "exclusion_flags": [], "missing_info": ["Gemini not configured"],
@@ -580,7 +672,7 @@ def gemini_eligibility_check(patient_profile, eligibility_criteria_text, nct_id)
     try:
         from google import genai
         from google.genai import types
-        client = genai.Client(vertexai=True, project=project, location='global')
+        client = _get_genai_client()
         prompt = f"""You are a clinical trial eligibility expert. Analyze whether this patient qualifies for a clinical trial.
 
 PATIENT PROFILE:
@@ -598,22 +690,44 @@ Respond ONLY with valid JSON:
   "missing_info": ["<info needed>"],
   "plain_english_summary": "<2 sentence plain language explanation>"
 }}"""
+        print(f"[GEMINI MATCH] Sending request to gemini-2.5-flash for {nct_id}...")
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(response_mime_type='application/json')
         )
+        print(f"[GEMINI MATCH] Received response from model for {nct_id}. Parsing...")
         result = json.loads(response.text)
         result['status'] = result.get('verdict', 'UNKNOWN')
         result['reason'] = result.get('plain_english_summary', '')
+        print(f"[GEMINI MATCH] Eligibility verdict for {nct_id} successfully parsed: {result['status']}")
         return result
-    except Exception as e:
-        print(f"Gemini eligibility check failed for {nct_id}: {e}")
+    except GoogleAPIError as e:
+        print(f"[GEMINI MATCH] Google API Error for {nct_id}: {e}")
+        traceback.print_exc()
         return {
             "status": "NO_DATA", "verdict": "UNKNOWN", "confidence": 0,
             "match_reasons": [], "exclusion_flags": [], "missing_info": [],
-            "plain_english_summary": "AI analysis temporarily unavailable.",
-            "reason": "AI analysis temporarily unavailable."
+            "plain_english_summary": "AI analysis temporarily unavailable due to API error.",
+            "reason": "AI analysis temporarily unavailable due to API error."
+        }
+    except json.JSONDecodeError as e:
+        print(f"[GEMINI MATCH] JSON Decode Error for {nct_id}: {e}")
+        traceback.print_exc()
+        return {
+            "status": "NO_DATA", "verdict": "UNKNOWN", "confidence": 0,
+            "match_reasons": [], "exclusion_flags": [], "missing_info": [],
+            "plain_english_summary": "AI analysis returned malformed data.",
+            "reason": "AI analysis returned malformed data."
+        }
+    except Exception as e:
+        print(f"[GEMINI MATCH] Unexpected Exception for {nct_id}: {e}")
+        traceback.print_exc()
+        return {
+            "status": "NO_DATA", "verdict": "UNKNOWN", "confidence": 0,
+            "match_reasons": [], "exclusion_flags": [], "missing_info": [],
+            "plain_english_summary": "AI analysis temporarily unavailable due to unexpected error.",
+            "reason": "AI analysis temporarily unavailable due to unexpected error."
         }
 
 
@@ -625,7 +739,7 @@ def extract_patient_profile_from_document(file_bytes, mime_type):
     try:
         from google import genai
         from google.genai import types
-        client = genai.Client(vertexai=True, project=project, location='global')
+        client = _get_genai_client()
         document_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
         prompt = """Extract structured medical information from this document.
 Normalise all lab values to standard SI units during extraction.
@@ -660,8 +774,14 @@ Return ONLY valid JSON:
             raw = re.sub(r'^```[a-z]*\n?', '', raw)
             raw = re.sub(r'\n?```$', '', raw.strip())
         return json.loads(raw)
+    except GoogleAPIError as e:
+        print(f"Document extraction failed due to Google API error: {e}")
+        return {"error": "Document extraction failed due to API error.", "extraction_confidence": 0}
+    except json.JSONDecodeError as e:
+        print(f"Document extraction failed to decode JSON: {e}")
+        return {"error": "Document extraction returned malformed data.", "extraction_confidence": 0}
     except Exception as e:
-        print(f"Document extraction failed: {e}")
+        print(f"Document extraction failed due to unexpected error: {e}")
         return {
             "error": str(e), "extraction_confidence": 0,
             "diagnosis": [], "prior_treatments": [], "labs": {}

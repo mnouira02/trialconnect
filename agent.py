@@ -2,8 +2,17 @@ import os
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
 
-# Tell ADK to use Vertex AI (uses gcloud ADC credentials) instead of Gemini API
-os.environ.setdefault('GOOGLE_GENAI_USE_VERTEXAI', 'true')
+# Determine if Vertex AI / ADC is available, otherwise fall back to AI Studio API key
+adc_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+default_adc_path = os.path.expanduser('~/.config/gcloud/application_default_credentials.json')
+default_adc_path_win = os.path.expandvars('%APPDATA%/gcloud/application_default_credentials.json')
+if adc_path or os.path.exists(default_adc_path) or os.path.exists(default_adc_path_win):
+    os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'true'
+else:
+    os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'false'
+    if not os.environ.get('GEMINI_API_KEY'):
+        os.environ['GEMINI_API_KEY'] = os.environ.get('GOOGLE_MAPS_API_KEY', '')
+
 os.environ.setdefault('GOOGLE_CLOUD_PROJECT', 'trialconnect-app')
 os.environ.setdefault('GOOGLE_CLOUD_LOCATION', 'us-central1')
 
@@ -67,9 +76,11 @@ def search_trials(condition: str, location: str) -> dict:
         return {"error": str(e)}
 
 
-def check_eligibility(nct_id: str, age: int = None, sex: str = None,
-                      diagnosis: str = None, prior_treatments: str = None,
-                      comorbidities: str = None) -> dict:
+from typing import Optional
+
+def check_eligibility(nct_id: str, age: Optional[int] = None, sex: Optional[str] = None,
+                      diagnosis: Optional[str] = None, prior_treatments: Optional[str] = None,
+                      comorbidities: Optional[str] = None) -> dict:
     """Check whether a patient is eligible for a specific clinical trial.
 
     Args:

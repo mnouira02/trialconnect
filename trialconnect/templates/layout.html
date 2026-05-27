@@ -140,18 +140,26 @@
         <!-- Navigation-->
         <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
             <div class="container px-5">
-                <a class="navbar-brand" href="{{ url_for('index') }}">
+                <a class="navbar-brand" href="{{ url_for('routes.index') }}">
                     <img src="{{ url_for('static', filename='assets/trialConnect_transparent_logo.png') }}" alt="Trial Connect Logo" height="30" class="me-2">
                     <span style="color: var(--bs-white);"><strong>trial</strong>connect</span>
                 </a>
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
                 <div class="collapse navbar-collapse" id="navbarSupportedContent">
                     <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
-                        <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}">Home</a></li>
-                        <li class="nav-item"><a class="nav-link" href="{{ url_for('about') }}">About</a></li>
-                        <li class="nav-item"><a class="nav-link" href="{{ url_for('contact') }}">Contact</a></li>
-                        <li class="nav-item"><a class="nav-link" href="{{ url_for('faq') }}">FAQ</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{{ url_for('routes.index') }}">Home</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{{ url_for('routes.about') }}">About</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{{ url_for('routes.contact') }}">Contact</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{{ url_for('routes.faq') }}">FAQ</a></li>
                     </ul>
+
+                    <!-- Universal Search Bar -->
+                    <form class="d-flex my-2 my-lg-0 me-lg-3" action="{{ url_for('routes.index') }}" method="GET">
+                        <div class="input-group">
+                            <input class="form-control" type="search" name="query" placeholder="Search trials..." aria-label="Search">
+                            <button class="btn btn-outline-light" type="submit"><i class="bi bi-search"></i></button>
+                        </div>
+                    </form>
 
                     <!-- User Authentication Section -->
                     <div class="d-flex align-items-center ms-lg-3">
@@ -170,17 +178,17 @@
                                     {{ session.user.firstName }}
                                 </a>
                                 <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdownUser">
-                                    <li><a class="dropdown-item" href="{{ url_for('profile') }}">Profile</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('routes.profile') }}">Profile</a></li>
                                     {% if session.user.email == 'frenchieeap@gmail.com' %}
-                                        <li><a class="dropdown-item" href="{{ url_for('admin') }}">Admin</a></li>
+                                        <li><a class="dropdown-item" href="{{ url_for('routes.admin') }}">Admin</a></li>
                                     {% endif %}
                                     <li><hr class="dropdown-divider"></li>
-                                    <li><a class="dropdown-item" href="{{ url_for('logout') }}">Logout</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('routes.logout') }}">Logout</a></li>
                                 </ul>
                             </div>
                         {% else %}
-                            <a class="btn btn-outline-light me-2" href="{{ url_for('login') }}">Log In</a>
-                            <a class="btn btn-primary" href="{{ url_for('register') }}">Register</a>
+                            <a class="btn btn-outline-light me-2" href="{{ url_for('routes.login') }}">Log In</a>
+                            <a class="btn btn-primary" href="{{ url_for('routes.register') }}">Register</a>
                         {% endif %}
                     </div>
                 </div>
@@ -210,13 +218,13 @@
     <footer class="bg-dark py-4 mt-auto">
         <div class="container px-5">
             <div class="row align-items-center justify-content-between flex-column flex-sm-row">
-                <div class="col-auto"><div class="small m-0 text-white">Copyright &copy; Marouane Nouira 2025</div></div>
+                <div class="col-auto"><div class="small m-0 text-white">Copyright &copy; Marouane Nouira 2026</div></div>
                 <div class="col-auto">
-                    <a class="link-light small" href="{{ url_for('privacy') }}">Privacy</a>
+                    <a class="link-light small" href="{{ url_for('routes.privacy') }}">Privacy</a>
                     <span class="text-white mx-1">&middot;</span>
-                    <a class="link-light small" href="{{ url_for('terms') }}">Terms</a>
+                    <a class="link-light small" href="{{ url_for('routes.terms') }}">Terms</a>
                     <span class="text-white mx-1">&middot;</span>
-                    <a class="link-light small" href="{{ url_for('contact') }}">Contact</a>
+                    <a class="link-light small" href="{{ url_for('routes.contact') }}">Contact</a>
                 </div>
             </div>
         </div>
@@ -251,5 +259,23 @@
     <script src="{{ url_for('static', filename='js/agent_chat.js') }}"></script>
 
     {% block scripts %}{% endblock %}
+
+    <!-- Eligibility Detail Modal -->
+    <div class="modal fade" id="eligibilityDetailModal" tabindex="-1" aria-labelledby="eligibilityDetailModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="eligibilityDetailModalLabel">AI Eligibility Details</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="eligibilityDetailModalBody">
+                    <!-- Content will be injected here by JavaScript -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

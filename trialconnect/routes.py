@@ -1,11 +1,15 @@
 import secrets
+import json
+import pymongo
 from datetime import datetime, timedelta, timezone
 from flask import get_flashed_messages, render_template, request, redirect, url_for, session, current_app, abort, flash, make_response, jsonify
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 import os, uuid, requests
 from bson import ObjectId
+from google.api_core.exceptions import GoogleAPIError
 from .oauth_setup import oauth
+from .__init__ import limiter # Import the limiter instance
 from helpers import (
     add_contact_message, get_or_create_user, get_mongo_db, get_user_by_email,
     validate_password_strength, allowed_file,
@@ -15,10 +19,24 @@ from helpers import (
     search_trials_mongo, score_trial,
     fetch_trial_eligibility_text, gemini_eligibility_check,
     extract_patient_profile_from_document,
-    save_patient_dossier, load_patient_dossier
+    save_patient_dossier, load_patient_dossier,
+    generate_reset_token, verify_reset_token, is_image_by_magic_bytes
 )
 
-app = current_app
+from flask import Blueprint
+
+routes_bp = Blueprint('routes', __name__)
+
+
+
+# Cache for /api/stats endpoint (5 minutes TTL)
+_stats_cache = None
+_stats_cache_time = None
+STATS_CACHE_TTL = 300  # 5 minutes in seconds
+
+# Use routes_bp instead of app for route decorators
+# All @app.route become @routes_bp.route
+# All url_for('...') become url_for('routes. ...')
 
 # ---------------------------------------------------------------------------
 # Helper: resolve admin email from env (never hardcoded)
@@ -29,7 +47,7 @@ def _is_admin():
 
 
 # --- Page Routes ---
-@app.route('/')
+@routes_bp.route('/')
 def index():
     query = request.args.get('query')
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
@@ -50,7 +68,7 @@ def index():
 # ---------------------------------------------------------------------------
 # GUIDED ONBOARDING WIZARD
 # ---------------------------------------------------------------------------
-@app.route('/onboarding')
+@routes_bp.route('/onboarding')
 def onboarding():
     """4-step guided wizard: condition → location → profile → review & launch."""
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
@@ -68,11 +86,11 @@ def onboarding():
 # ---------------------------------------------------------------------------
 # TRIAL DETAIL PAGE
 # ---------------------------------------------------------------------------
-@app.route('/trial/<nct_id>')
+@routes_bp.route('/trial/<nct_id>')
 def trial_detail(nct_id):
     """Full trial detail page: eligibility, map of locations, AI match button."""
     db = get_mongo_db()
-    trial = db['trials'].find_one({'nctId': nct_id})
+    trial = db['trials'].find_one({'nct_id': nct_id})
     if trial:
         trial['id'] = str(trial.pop('_id', ''))
         # Normalise field names consistently
@@ -129,11 +147,11 @@ def trial_detail(nct_id):
                 'locations': [
                     {
                         'facility': l.get('facility', {}).get('name', ''),
-                        'city':    l.get('geoPoint', {}).get('lat') and l.get('facility', {}).get('address', {}).get('city', ''),
-                        'country': l.get('facility', {}).get('address', {}).get('country', ''),
-                        'status':  l.get('status', ''),
-                        'lat':     l.get('geoPoint', {}).get('lat'),
-                        'lon':     l.get('geoPoint', {}).get('lng'),
+                        'city':     l.get('geoPoint', {}).get('lat') and l.get('facility', {}).get('address', {}).get('city', ''),
+                        'country':  l.get('facility', {}).get('address', {}).get('country', ''),
+                        'status':   l.get('status', ''),
+                        'lat':      l.get('geoPoint', {}).get('lat'),
+                        'lon':      l.get('geoPoint', {}).get('lng'),
                         'geoPoint': {
                             'lat': l.get('geoPoint', {}).get('lat'),
                             'lon': l.get('geoPoint', {}).get('lng')
@@ -144,21 +162,27 @@ def trial_detail(nct_id):
                 ]
             }
         except Exception as e:
-            print(f'trial_detail fetch error: {e}')
-            abort(404)
-    return render_template('trial_detail.html', trial=trial)
+            print(f'trial_detail fetch error: {e} — redirecting to ClinicalTrials.gov')
+            return redirect(f'https://clinicaltrials.gov/study/{nct_id}')
+    return render_template('trial_detail.html', trial=trial, google_maps_api_key=current_app.config['GOOGLE_MAPS_API_KEY'])
 
 
 # ---------------------------------------------------------------------------
 # STATS API  (MongoDB aggregation showcase)
 # ---------------------------------------------------------------------------
-@app.route('/api/stats')
+@routes_bp.route('/api/stats')
 def api_stats():
-    """Live platform stats powered by MongoDB aggregation pipeline."""
+    """Live platform stats powered by MongoDB aggregation pipeline (cached for 5 minutes)."""
+    global _stats_cache, _stats_cache_time
+    import time
+    now = time.time()
+    if _stats_cache and _stats_cache_time and (now - _stats_cache_time < STATS_CACHE_TTL):
+        return jsonify(_stats_cache)
+
     try:
         db = get_mongo_db()
         total_trials = db['trials'].count_documents({})
-        recruiting   = db['trials'].count_documents({'status': {'$regex': 'RECRUITING', '$options': 'i'}})
+        recruiting   = db['trials'].count_documents({'overall_status': {'$regex': 'RECRUITING', '$options': 'i'}})
         conditions_count = len(db['trials'].distinct('conditions_str'))
 
         # Top 5 conditions by trial count
@@ -169,23 +193,29 @@ def api_stats():
         ]
         top_conditions = list(db['trials'].aggregate(pipeline))
 
-        return jsonify({
+        _stats_cache = {
             'total_trials':     total_trials,
             'recruiting':       recruiting,
             'conditions_covered': conditions_count,
             'top_conditions':   [{'condition': c['_id'], 'count': c['count']} for c in top_conditions]
-        })
+        }
+        _stats_cache_time = now
+        print(f"[STATS LOADED] Total: {total_trials}, Recruiting: {recruiting}, Conditions: {conditions_count}")
+        return jsonify(_stats_cache)
+    except pymongo.errors.PyMongoError as e:
+        print(f'api_stats database error: {e}')
+        return jsonify({'error': 'Stats unavailable due to database error.'}), 500
     except Exception as e:
-        print(f'api_stats error: {e}')
-        return jsonify({'error': 'Stats unavailable'}), 500
+        print(f'api_stats unexpected error: {e}')
+        return jsonify({'error': 'Stats unavailable due to unexpected error.'}), 500
 
 
-@app.route('/api/openapi.json')
+@routes_bp.route('/api/openapi.json')
 def openapi_spec():
     spec = {
         "openapi": "3.0.0",
         "info": {"title": "TrialConnect API", "version": "1.0.0", "description": "AI-powered clinical trial search and eligibility matching API."},
-        "servers": [{"url": "https://trialconnect-404183020569.us-central1.run.app"}],
+        "servers": [{"url": request.url_root.rstrip('/')}],
         "paths": {
             "/api/search": {
                 "get": {
@@ -220,7 +250,7 @@ def openapi_spec():
     return jsonify(spec)
 
 
-@app.route('/api/search')
+@routes_bp.route('/api/search')
 def api_search():
     query = request.args.get('query')
     user_lat = request.args.get('lat', type=float)
@@ -279,18 +309,22 @@ def api_search():
         promoted_list.sort(key=lambda x: x.get('score', 0), reverse=True)
         regular_list.sort(key=lambda x: x.get('score', 0), reverse=True)
         return jsonify(promoted_list + regular_list)
+    except (pymongo.errors.PyMongoError, requests.exceptions.RequestException) as e:
+        print(f"Error in api_search (database/network): {e}")
+        return jsonify({"error": "An error occurred while searching due to a database or network issue."}), 500
     except Exception as e:
-        print(f"Error in api_search: {e}")
-        return jsonify({"error": "An error occurred while searching."}), 500
+        print(f"Error in api_search (unexpected): {e}")
+        return jsonify({"error": "An unexpected error occurred while searching."}), 500
 
 
-@app.route('/api/upload_profile', methods=['POST'])
+@routes_bp.route('/api/upload_profile', methods=['POST'])
 def api_upload_profile():
     if 'file' not in request.files:
         return jsonify({"error": "No file provided."}), 400
     file = request.files['file']
     if not file or file.filename == '':
         return jsonify({"error": "No file selected."}), 400
+
     allowed_upload_types = {'pdf', 'png', 'jpg', 'jpeg'}
     ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
     if ext not in allowed_upload_types:
@@ -301,12 +335,15 @@ def api_upload_profile():
         mime_type = mime_map[ext]
         profile = extract_patient_profile_from_document(file_bytes, mime_type)
         return jsonify({"status": "ok", "patient_profile": profile})
+    except (GoogleAPIError, json.JSONDecodeError) as e:
+        print(f"Document extraction error (Gemini/JSON): {e}")
+        return jsonify({"error": "Failed to extract profile from document due to AI processing error."}), 500
     except Exception as e:
-        print(f"Document extraction error: {e}")
-        return jsonify({"error": "Failed to extract profile from document."}), 500
+        print(f"Document extraction error (unexpected): {e}")
+        return jsonify({"error": "Failed to extract profile from document due to an unexpected error."}), 500
 
 
-@app.route('/api/apply_medical_profile', methods=['POST'])
+@routes_bp.route('/api/apply_medical_profile', methods=['POST'])
 def api_apply_medical_profile():
     data = request.get_json(silent=True)
     if not data:
@@ -327,8 +364,11 @@ def api_apply_medical_profile():
     return jsonify({"status": "ok", "message": "Medical profile saved."})
 
 
-@app.route('/api/check_match/<nct_id>', methods=['GET', 'POST'])
+@routes_bp.route('/api/check_match/<nct_id>', methods=['GET', 'POST'])
+@limiter.exempt
 def api_check_match(nct_id):
+
+
     if not session.get('user'):
         return jsonify({"status": "NOT_LOGGED_IN"}), 401
     if not nct_id:
@@ -369,13 +409,16 @@ def api_check_match(nct_id):
             return jsonify(check_user_study_match(user_data, nct_id))
         result = gemini_eligibility_check(patient_profile, eligibility_text, nct_id)
         return jsonify(result)
+    except (pymongo.errors.PyMongoError, requests.exceptions.RequestException, GoogleAPIError, json.JSONDecodeError) as e:
+        print(f"Match check error for {nct_id} (DB/API/Gemini/JSON): {e}")
+        return jsonify({"error": "Match check failed due to a backend service error."}), 500
     except Exception as e:
-        print(f"Match check error for {nct_id}: {e}")
-        return jsonify({"error": "Match check failed."}), 500
+        print(f"Match check error for {nct_id} (unexpected): {e}")
+        return jsonify({"error": "Match check failed due to an unexpected error."}), 500
 
 
 # --- AI Chat Agent Endpoint ---
-@app.route('/api/agent_chat', methods=['POST'])
+@routes_bp.route('/api/agent_chat', methods=['POST'])
 def api_agent_chat():
     if not session.get('user'):
         return jsonify({'reply': 'Please log in to use the AI assistant.'}), 401
@@ -416,6 +459,9 @@ def api_agent_chat():
         session_service = getattr(current_app, 'agent_session_service', None)
 
         if runner is None:
+            # This means the agent failed to initialize in __init__.py
+            # Attempt a fallback initialization here, but warn.
+            print("Warning: ADK agent runner was not initialized in __init__.py. Attempting fallback.")
             from google.adk.runners import Runner
             from google.adk.sessions import InMemorySessionService
             from agent import root_agent
@@ -430,7 +476,12 @@ def api_agent_chat():
         import nest_asyncio
         nest_asyncio.apply()
 
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
         try:
             loop.run_until_complete(
                 session_service.create_session(
@@ -440,7 +491,7 @@ def api_agent_chat():
                 )
             )
         except Exception:
-            pass
+            pass # Session might already exist, or other non-critical error
 
         reply = ''
         for event in runner.run(
@@ -456,33 +507,39 @@ def api_agent_chat():
                 break
 
         return jsonify({'reply': reply or 'No response from agent.'})
+    except GoogleAPIError as e:
+        print(f"Agent chat failed due to Google API error: {e}")
+        return jsonify({'reply': 'Sorry, I had trouble connecting to the AI agent due to an API error. Please try again in a moment.'}), 500
+    except asyncio.TimeoutError as e:
+        print(f"Agent chat failed due to asyncio timeout: {e}")
+        return jsonify({'reply': 'Sorry, the AI agent took too long to respond. Please try again.'}), 500
     except Exception as e:
-        print(f"Agent chat error: {e}")
-        return jsonify({'reply': 'Sorry, I had trouble connecting to the AI agent. Please try again in a moment.'}), 500
+        print(f"Agent chat failed due to unexpected error: {e}")
+        return jsonify({'reply': 'Sorry, I had trouble connecting to the AI agent due to an unexpected error. Please try again in a moment.'}), 500
 
 
 # --- Static Page Routes ---
-@app.route('/about')
+@routes_bp.route('/about')
 def about():
     return render_template("about.html")
 
-@app.route('/faq')
+@routes_bp.route('/faq')
 def faq():
     return render_template("faq.html")
 
-@app.route('/terms')
+@routes_bp.route('/terms')
 def terms():
     return render_template("terms.html")
 
-@app.route('/privacy')
+@routes_bp.route('/privacy')
 def privacy():
     return render_template("privacy.html")
 
-@app.route('/thank_you')
+@routes_bp.route('/thank_you')
 def thank_you():
     return render_template("thank_you.html")
 
-@app.route('/contact', methods=['GET', 'POST'])
+@routes_bp.route('/contact', methods=['GET', 'POST'])
 def contact():
     error = None
     if request.method == 'POST':
@@ -494,12 +551,13 @@ def contact():
             error = "All fields are required. Please fill out the entire form."
         else:
             add_contact_message(firstName, lastName, email, message)
-            return redirect(url_for('thank_you'))
+            return redirect(url_for('routes.thank_you'))
     return render_template("contact.html", error=error)
 
 
 # --- Authentication Routes ---
-@app.route('/login', methods=['GET', 'POST'])
+@routes_bp.route('/login', methods=['GET', 'POST'])
+@limiter.shared_limit("5 per minute", scope="routes.login")
 def login():
     if request.method == 'POST':
         email = request.form.get('email')
@@ -515,7 +573,7 @@ def login():
             except Exception as e:
                 print(f"Warning: could not restore dossier on login: {e}")
             flash('You have been logged in successfully.', 'success')
-            response = make_response(redirect(url_for('index')))
+            response = make_response(redirect(url_for('routes.index')))
             if remember:
                 response.set_cookie('remember_token', user['remember_token'], max_age=30*24*60*60)
             return response
@@ -524,7 +582,7 @@ def login():
     return render_template("login.html")
 
 
-@app.route('/register', methods=['GET', 'POST'])
+@routes_bp.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         first_name = request.form.get('firstName')
@@ -540,11 +598,11 @@ def register():
             if check_password_hash(existing_user['password_hash'], password):
                 session['user'] = existing_user
                 flash('Welcome back! You have been logged in successfully.', 'success')
-                return redirect(url_for('index'))
+                return redirect(url_for('routes.index'))
             else:
-                message = 'An account with this email already exists. Please <a href="/login" class="alert-link">log in</a> or reset your password.'
+                message = 'An account with this email already exists. Please <a href="{{ url_for(\'routes.login\') }}" class="alert-link">log in</a> or reset your password.'
                 flash(message, 'warning')
-                return redirect(url_for('login'))
+                return redirect(url_for('routes.login'))
         strength_errors = validate_password_strength(password)
         if strength_errors:
             for error in strength_errors:
@@ -561,17 +619,17 @@ def register():
             birthYear=birthYear, sex=sex, password=password, auth_provider='local'
         )
         session['user'] = user
-        return redirect(url_for('index'))
+        return redirect(url_for('routes.index'))
     return render_template("register.html", now=datetime.now())
 
 
-@app.route('/login/google')
+@routes_bp.route('/login/google')
 def login_google():
-    redirect_uri = url_for('authorize', _external=True)
+    redirect_uri = url_for('routes.authorize', _external=True)
     return oauth.google.authorize_redirect(redirect_uri)
 
 
-@app.route('/authorize')
+@routes_bp.route('/authorize')
 def authorize():
     token = oauth.google.authorize_access_token()
     user_info = oauth.google.userinfo()
@@ -593,82 +651,101 @@ def authorize():
             session['medical_profile'] = dossier
     except Exception as e:
         print(f"Warning: could not restore dossier on Google login: {e}")
-    return redirect(url_for('index'))
+    return redirect(url_for('routes.index'))
 
 
-@app.route('/logout')
+@routes_bp.route('/logout')
 def logout():
     session.pop('user', None)
-    response = make_response(redirect(url_for('index')))
+    response = make_response(redirect(url_for('routes.index')))
     response.set_cookie('remember_token', '', expires=0)
     return response
 
 
-@app.route('/forgot_password', methods=['GET', 'POST'])
+@routes_bp.route('/forgot_password', methods=['GET', 'POST'])
+@limiter.shared_limit("3 per hour", scope="routes.forgot_password")
 def forgot_password():
     if request.method == 'POST':
         email = request.form.get('email')
         user = get_user_by_email(email)
         if user:
-            otp = ''.join(secrets.choice('0123456789') for i in range(6))
-            session[f'otp_for_{email}'] = otp
-            otp_hash = generate_password_hash(otp)
-            expiration = datetime.utcnow() + timedelta(minutes=10)
+            token = generate_reset_token(email)
+            # In a real application, you would send this token via email to the user.
+            # For this demo, we'll flash it (FOR DEMO/DEBUGGING PURPOSES ONLY).
+            flash(f"Password reset token (DEMO ONLY): {token}", "info")
+            # Store the token hash in the database for single-use verification
             db = get_mongo_db()
             db['users'].update_one(
                 {'email': email},
-                {'$set': {'reset_token': otp_hash, 'reset_token_expiration': expiration}}
+                {'$set': {'reset_token': generate_password_hash(token), 'reset_token_expiration': datetime.utcnow() + timedelta(minutes=60)}}
             )
-        flash("If an account with that email exists, a password reset code has been sent.", "success")
-        return redirect(url_for('index'))
+        flash("If an account with that email exists, a password reset link has been sent.", "success")
+        return redirect(url_for('routes.index'))
     return render_template("forgot_password.html")
 
 
-@app.route('/reset_with_token', methods=['GET', 'POST'])
+@routes_bp.route('/reset_with_token', methods=['GET', 'POST'])
 def reset_with_token():
     if request.method == 'POST':
         email = request.form.get('email')
-        otp = request.form.get('otp')
+        token = request.form.get('token') # Now expects 'token' instead of 'otp'
         new_password = request.form.get('new_password')
         confirm_password = request.form.get('confirm_password')
+
+        valid_email_from_token = verify_reset_token(token)
         user = get_user_by_email(email)
-        if not user or not user.get('reset_token') or not check_password_hash(user['reset_token'], otp):
-            flash("Invalid email or reset code.", "danger")
-            return redirect(url_for('reset_with_token'))
+
+        if not user or user['email'] != valid_email_from_token:
+            flash("Invalid or expired reset token.", "danger")
+            return redirect(url_for('routes.reset_with_token'))
+
+        # Verify that the token presented matches the one stored (hashed) in the database
+        if not user.get('reset_token') or not check_password_hash(user['reset_token'], token):
+            flash("Invalid or already used reset token.", "danger")
+            return redirect(url_for('routes.reset_with_token'))
+
+        # Check token expiration (from DB) - verify_reset_token already checks its internal expiration
         expiration_time = user['reset_token_expiration']
         if isinstance(expiration_time, str):
             expiration_time = datetime.fromisoformat(expiration_time).replace(tzinfo=timezone.utc)
         elif expiration_time.tzinfo is None:
             expiration_time = expiration_time.replace(tzinfo=timezone.utc)
+
         if expiration_time < datetime.now(timezone.utc):
-            flash("The reset code has expired. Please request a new one.", "danger")
-            session.pop(f'otp_for_{email}', None)
-            return redirect(url_for('forgot_password'))
+            flash("The reset token has expired. Please request a new one.", "danger")
+            # Clear expired token from DB
+            db = get_mongo_db()
+            db['users'].update_one(
+                {'email': email},
+                {'$set': {'reset_token': None, 'reset_token_expiration': None}}
+            )
+            return redirect(url_for('routes.forgot_password'))
+
         strength_errors = validate_password_strength(new_password)
         if strength_errors:
             for error in strength_errors:
                 flash(error, 'danger')
-            return redirect(url_for('reset_with_token'))
+            return render_template('reset_with_token.html', email=email, token=token) # Pass data back to template
         if new_password != confirm_password:
-            flash("Passwords do not match.", "danger")
-            return redirect(url_for('reset_with_token'))
+            flash("Passwords do not match.", 'danger')
+            return render_template('reset_with_token.html', email=email, token=token) # Pass data back to template
+
         new_password_hash = generate_password_hash(new_password)
         db = get_mongo_db()
         db['users'].update_one(
             {'email': email},
             {'$set': {'password_hash': new_password_hash, 'reset_token': None, 'reset_token_expiration': None}}
         )
-        session.pop(f'otp_for_{email}', None)
         flash("Your password has been successfully reset. Please log in.", "success")
-        return redirect(url_for('login'))
+        return redirect(url_for('routes.login'))
     return render_template("reset_with_token.html")
 
 
-@app.route('/profile', methods=['GET', 'POST'])
+@routes_bp.route('/profile', methods=['GET', 'POST'])
 def profile():
     if 'user' not in session:
         flash("You must be logged in to view this page.", "warning")
-        return redirect(url_for('login'))
+        return redirect(url_for('routes.login'))
     user_id = session['user']['id']
     if request.method == 'POST':
         db = get_mongo_db()
@@ -679,7 +756,8 @@ def profile():
         update_fields = {'firstName': firstName, 'lastName': lastName, 'birthYear': birthYear, 'sex': sex}
         if 'profile_picture' in request.files:
             file = request.files['profile_picture']
-            if file and file.filename and allowed_file(file.filename):
+            # Check both file extension and magic bytes for robust validation
+            if file and file.filename and allowed_file(file.filename) and is_image_by_magic_bytes(file.stream):
                 filename = secure_filename(file.filename)
                 unique_filename = str(uuid.uuid4()) + "_" + filename
                 filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], unique_filename)
@@ -708,12 +786,12 @@ def profile():
         )
         if not password_flashed:
             flash("Your profile has been saved.", "success")
-        return redirect(url_for('profile'))
+        return redirect(url_for('routes.profile'))
     user_data = get_user_by_id(user_id)
     return render_template("profile.html", user=user_data, now=datetime.now(timezone.utc))
 
 
-@app.route('/delete_account', methods=['POST'])
+@routes_bp.route('/delete_account', methods=['POST'])
 def delete_account():
     if 'user' not in session:
         abort(403)
@@ -721,17 +799,17 @@ def delete_account():
     admin_email = os.environ.get('ADMIN_EMAIL', '')
     if admin_email and session['user'].get('email') == admin_email:
         flash("The primary admin account cannot be deleted.", "danger")
-        return redirect(url_for('profile'))
+        return redirect(url_for('routes.profile'))
     db = get_mongo_db()
     db['users'].delete_one({'_id': ObjectId(user_id)})
     db['patient_dossiers'].delete_one({'user_id': user_id})
     session.clear()
     flash("Your account has been permanently deleted.", "success")
-    return redirect(url_for('index'))
+    return redirect(url_for('routes.index'))
 
 
 # --- Admin Routes ---
-@app.route('/admin')
+@routes_bp.route('/admin')
 def admin():
     if not _is_admin():
         abort(403)
@@ -773,7 +851,7 @@ def admin():
     return render_template("admin.html", users=processed_users, contacts=contacts, promoted_list=promoted_list)
 
 
-@app.route('/admin/delete_user/<user_id>', methods=['POST'])
+@routes_bp.route('/admin/delete_user/<user_id>', methods=['POST'])
 def delete_user(user_id):
     if not _is_admin():
         abort(403)
@@ -785,13 +863,13 @@ def delete_user(user_id):
         abort(400)
     if user_to_delete and admin_email and user_to_delete.get('email') == admin_email:
         flash("You cannot delete the primary admin account.", "danger")
-        return redirect(url_for('admin'))
+        return redirect(url_for('routes.admin'))
     db['users'].delete_one({'_id': ObjectId(user_id)})
     flash("User has been successfully deleted.", "success")
-    return redirect(url_for('admin'))
+    return redirect(url_for('routes.admin'))
 
 
-@app.route('/admin/delete_contact/<contact_id>', methods=['POST'])
+@routes_bp.route('/admin/delete_contact/<contact_id>', methods=['POST'])
 def delete_contact(contact_id):
     if not _is_admin():
         abort(403)
@@ -801,10 +879,10 @@ def delete_contact(contact_id):
     except Exception:
         abort(400)
     flash("Contact message has been successfully deleted.", "success")
-    return redirect(url_for('admin'))
+    return redirect(url_for('routes.admin'))
 
 
-@app.route('/admin/clear_data', methods=['POST'])
+@routes_bp.route('/admin/clear_data', methods=['POST'])
 def clear_data():
     if not _is_admin():
         abort(403)
@@ -813,10 +891,10 @@ def clear_data():
     db['users'].delete_many({'email': {'$ne': admin_email}})
     db['contacts'].delete_many({})
     flash("All user and contact entries (except for the admin account) have been successfully deleted.", "success")
-    return redirect(url_for('admin'))
+    return redirect(url_for('routes.admin'))
 
 
-@app.route("/admin/promote/add", methods=["POST"])
+@routes_bp.route("/admin/promote/add", methods=["POST"])
 def add_promotion():
     if not _is_admin():
         abort(403)
@@ -826,13 +904,13 @@ def add_promotion():
         flash(f"{nct_id} added to promotions.", "success")
     else:
         flash("NCT ID cannot be empty.", "danger")
-    return redirect(url_for('admin'))
+    return redirect(url_for('routes.admin'))
 
 
-@app.route("/admin/promote/remove/<nct_id>", methods=["POST"])
+@routes_bp.route("/admin/promote/remove/<nct_id>", methods=["POST"])
 def remove_promotion(nct_id):
     if not _is_admin():
         abort(403)
     remove_promoted_study(nct_id)
     flash(f"{nct_id} removed from promotions.", "success")
-    return redirect(url_for('admin'))
+    return redirect(url_for('routes.admin'))
