@@ -5,14 +5,23 @@
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Cloud%20Run-blue)](https://trialconnect-404183020569.us-central1.run.app)
 [![Built With](https://img.shields.io/badge/Built%20With-MongoDB%20%2B%20GCP-green)](https://github.com/mnouira02/trialconnect)
 [![Onboarding](https://img.shields.io/badge/Try%20It-Guided%20Wizard-purple)](https://trialconnect-404183020569.us-central1.run.app/onboarding)
+[![Demo Video](https://img.shields.io/badge/Demo%20Video-YouTube-red)](https://youtu.be/8OkaJ7GAv6M)
 
 > Built for the **MongoDB + Google Cloud Hackathon 2025**
 
 ---
 
+## 🎬 Demo Video
+
+[![TrialConnect Demo](https://img.youtube.com/vi/8OkaJ7GAv6M/maxresdefault.jpg)](https://youtu.be/8OkaJ7GAv6M)
+
+**➡️ [Watch the full demo on YouTube →](https://youtu.be/8OkaJ7GAv6M)**
+
+---
+
 ## 🌍 The Problem
 
-Over **80% of clinical trials fail to meet enrollment targets**, while millions of patients who qualify never find out they’re eligible. The gap between patients and trials is a *navigation problem* — not a supply problem.
+Over **80% of clinical trials fail to meet enrollment targets**, while millions of patients who qualify never find out they're eligible. The gap between patients and trials is a *navigation problem* — not a supply problem.
 
 Traditional search requires patients to know the right medical jargon, wade through dense eligibility criteria, and manually contact study coordinators. Most give up.
 
@@ -20,7 +29,7 @@ Traditional search requires patients to know the right medical jargon, wade thro
 
 ## 💡 The Solution
 
-TrialConnect is a **guided AI concierge** that takes a patient from “I have lung cancer” to “Here are 12 trials you likely qualify for, ranked by distance” — in under 60 seconds.
+TrialConnect is a **guided AI concierge** that takes a patient from "I have lung cancer" to "Here are 12 trials you likely qualify for, ranked by distance" — in under 60 seconds.
 
 **➡️ [Try the live demo →](https://trialconnect-404183020569.us-central1.run.app/onboarding)**
 
@@ -59,7 +68,7 @@ Step 4 ─ Review & launch      (confirm summary, consent tick, one button)
    ↓
 Results ─ Ranked trials       (vector search + geospatial + AI eligibility)
    ↓
-Detail page ─ Per trial       (eligibility criteria, location map, “Check my match”)
+Detail page ─ Per trial       (eligibility criteria, location map, "Check my match")
 ```
 
 ---
@@ -129,7 +138,7 @@ graph TD
 2. **Semantic search** — MongoDB Atlas Vector Search finds trials by meaning using `text-embedding-005`
 3. **Condition boost** — Post-ranking re-scorer rewards exact condition phrase matches
 4. **Proximity scoring** — Haversine distance to nearest trial site
-5. **Gemini eligibility check** — Full inclusion/exclusion criteria analysed against the patient’s profile by Gemini 2.5 Flash
+5. **Gemini eligibility check** — Full inclusion/exclusion criteria analysed against the patient's profile by Gemini 2.5 Flash
 6. **Trial detail page** — Per-trial deep view with eligibility text, location map, and match explanation
 
 ---
@@ -192,6 +201,8 @@ App at `http://localhost:5000` — start at `/onboarding` for the full guided ex
 gcloud run deploy trialconnect \
   --source . \
   --region us-central1 \
+  --memory 1Gi \
+  --cpu 1 \
   --project YOUR_PROJECT_ID
 ```
 
@@ -229,8 +240,8 @@ trialconnect/
 │   ├── oauth_setup.py       # Google OAuth
 │   ├── static/              # CSS, JS, images
 │   └── templates/
-│       ├── onboarding.html    # ⭐ Guided wizard (NEW)
-│       ├── trial_detail.html  # ⭐ Trial detail page (NEW)
+│       ├── onboarding.html    # ⭐ Guided wizard
+│       ├── trial_detail.html  # ⭐ Trial detail page
 │       ├── index.html         # Search + results
 │       └── …
 ├── helpers.py               # MongoDB, Gemini, search logic
