@@ -66,32 +66,42 @@ Detail page ─ Per trial       (eligibility criteria, location map, “Check my
 
 ## 🏗️ Architecture
 
-```
-User Browser
-    │
-    ▼
-Flask App (Google Cloud Run)
-    │
-    ├── MongoDB Atlas
-    │     ├── trials          (4 468 studies + text-embedding-005 vectors)
-    │     ├── users          (accounts, profiles)
-    │     ├── patient_dossiers (persistent medical profiles)
-    │     ├── promoted       (sponsor-boosted trials)
-    │     └── contacts       (contact form submissions)
-    │
-    ├── Vertex AI / Gemini 2.5 Flash
-    │     ├── Eligibility matching
-    │     ├── Medical document extraction
-    │     └── Agent Builder chatbot
-    │
-    ├── text-embedding-005 (Vertex AI Embeddings)
-    │     └── 768-dim vectors, cosine similarity
-    │
-    ├── ClinicalTrials.gov REST API v2
-    │     └── 26 conditions, up to 200 trials each
-    │
-    └── OpenStreetMap Nominatim
-          └── Free geocoding for onboarding wizard
+```mermaid
+graph TD
+    User["🌍 User Browser"] -->|HTTP / HTTPS| Flask["🐍 Flask Application (Google Cloud Run)"]
+    
+    subgraph Data Layer
+        Flask -->|PyMongo| Mongo[("🍃 MongoDB Atlas")]
+        Mongo -->|Collection: trials| T["Trials (Vector Embedded)"]
+        Mongo -->|Collection: users| U["User Profiles"]
+        Mongo -->|Collection: patient_dossiers| D["Patient Dossiers"]
+        Mongo -->|Collection: promoted| P["Promoted Trials"]
+    end
+    
+    subgraph AI & Inference
+        Flask -->|Vertex AI SDK| Gemini["🤖 Gemini 2.5 Flash"]
+        Gemini -->|Task| Match["AI Eligibility Checker"]
+        Gemini -->|Task| Doc["Document Data Extractor"]
+        
+        Flask -->|Vertex AI SDK| Embed["✨ text-embedding-005"]
+        Embed -->|Vector Search| Mongo
+        
+        Flask -->|Agent Builder| Chat["💬 Conversational AI Agent"]
+    end
+    
+    subgraph External Services
+        Flask -->|REST API v2| CT["🏥 ClinicalTrials.gov"]
+        Flask -->|HTTP| Nominatim["📍 OpenStreetMap Nominatim"]
+    end
+
+    style User fill:#e0f2fe,stroke:#0369a1,stroke-width:2px
+    style Flask fill:#eff6ff,stroke:#1d4ed8,stroke-width:2px
+    style Mongo fill:#f0fdf4,stroke:#15803d,stroke-width:2px
+    style Gemini fill:#faf5ff,stroke:#7e22ce,stroke-width:2px
+    style Embed fill:#faf5ff,stroke:#7e22ce,stroke-width:2px
+    style Chat fill:#faf5ff,stroke:#7e22ce,stroke-width:2px
+    style CT fill:#fffbeb,stroke:#b45309,stroke-width:2px
+    style Nominatim fill:#fffbeb,stroke:#b45309,stroke-width:2px
 ```
 
 ---
